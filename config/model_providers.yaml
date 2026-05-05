@@ -1,0 +1,13 @@
+model:
+  active_provider: openrouter
+  providers:
+    apiopencc:
+      base_url: "https://apiopencc.com/v1"
+      endpoint: "responses"
+      api_key_env: "APIOPENCC_API_KEY"
+      model: "gpt-4.1-mini"
+    openrouter:
+      base_url: "https://openrouter.ai/api/v1"
+      endpoint: "chat_completions"
+      api_key_env: "OPENROUTER_API_KEY"
+      model: "minimax/minimax-m2.7"

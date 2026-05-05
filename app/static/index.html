@@ -1,0 +1,1644 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>车险出单双 Agent 验证台</title>
+    <style>
+      :root {
+        color-scheme: light;
+        --bg: #f4f6f8;
+        --panel: #ffffff;
+        --text: #172033;
+        --muted: #6b7280;
+        --line: #dbe2ea;
+        --green: #16a34a;
+        --blue: #2563eb;
+        --amber: #d97706;
+        --soft-blue: #eef5ff;
+        --soft-green: #edfdf3;
+        --soft-amber: #fff7ed;
+        --shadow: 0 16px 40px rgba(15, 23, 42, 0.08);
+      }
+      * { box-sizing: border-box; }
+      body {
+        margin: 0;
+        background: var(--bg);
+        color: var(--text);
+        font-family: Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+      }
+      .app-shell {
+        min-height: 100vh;
+        display: grid;
+        grid-template-columns: minmax(360px, 430px) minmax(520px, 1fr);
+        gap: 18px;
+        padding: 18px;
+      }
+      .phone-panel, .result-panel {
+        min-height: calc(100vh - 36px);
+        background: var(--panel);
+        border: 1px solid var(--line);
+        border-radius: 14px;
+        box-shadow: var(--shadow);
+        overflow: hidden;
+      }
+      .phone-panel { display: flex; flex-direction: column; }
+      .phone-header {
+        padding: 14px 16px;
+        background: #1f2937;
+        color: #fff;
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+      }
+      .phone-title { font-size: 15px; font-weight: 700; }
+      .status-dot {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        font-size: 12px;
+        color: #d1fae5;
+      }
+      .status-dot::before {
+        content: "";
+        width: 8px;
+        height: 8px;
+        border-radius: 50%;
+        background: #22c55e;
+      }
+      .chat-body {
+        flex: 1;
+        padding: 16px;
+        background: #e8edf3;
+        overflow: auto;
+      }
+      .bubble {
+        max-width: 86%;
+        margin-bottom: 12px;
+        padding: 10px 12px;
+        border-radius: 10px;
+        line-height: 1.55;
+        font-size: 14px;
+        white-space: pre-wrap;
+      }
+      .bubble.bot { background: #fff; border-top-left-radius: 3px; }
+      .bubble.user { margin-left: auto; background: #95ec69; border-top-right-radius: 3px; }
+      .input-area {
+        padding: 14px;
+        border-top: 1px solid var(--line);
+        background: #fff;
+      }
+      .bubble-wrap {
+        display: flex;
+        gap: 6px;
+        align-items: flex-start;
+        margin-bottom: 12px;
+      }
+      .bubble-wrap.user { justify-content: flex-end; }
+      .quote-message-button {
+        margin-top: 5px;
+        border: 1px solid rgba(100, 116, 139, 0.25);
+        background: rgba(255, 255, 255, 0.72);
+        color: var(--muted);
+        border-radius: 999px;
+        padding: 4px 7px;
+        font-size: 11px;
+        cursor: pointer;
+      }
+      .quote-message-button:hover {
+        border-color: var(--blue);
+        color: var(--blue);
+      }
+      .quote-snippet {
+        margin-bottom: 7px;
+        padding: 6px 8px;
+        border-left: 3px solid #94a3b8;
+        background: rgba(255, 255, 255, 0.55);
+        color: #64748b;
+        font-size: 12px;
+        line-height: 1.45;
+      }
+      .bubble-attachments {
+        display: grid;
+        gap: 5px;
+        margin-top: 7px;
+      }
+      .bubble-attachment {
+        display: inline-block;
+        max-width: 100%;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        border-radius: 8px;
+        background: rgba(255, 255, 255, 0.55);
+        padding: 5px 7px;
+        color: #334155;
+        font-size: 12px;
+        white-space: nowrap;
+      }
+      .composer {
+        display: grid;
+        grid-template-columns: auto 1fr auto;
+        gap: 8px;
+        align-items: end;
+      }
+      .attach-button {
+        width: 42px;
+        height: 42px;
+        border: 1px solid var(--line);
+        border-radius: 10px;
+        background: #f8fafc;
+        color: #334155;
+        cursor: pointer;
+        font-size: 13px;
+        font-weight: 800;
+      }
+      .attach-button:hover {
+        border-color: var(--blue);
+        color: var(--blue);
+        background: var(--soft-blue);
+      }
+      textarea {
+        width: 100%;
+        min-height: 42px;
+        max-height: 120px;
+        resize: vertical;
+        border: 1px solid var(--line);
+        border-radius: 10px;
+        padding: 10px 12px;
+        color: var(--text);
+        font: inherit;
+        line-height: 1.5;
+        outline: none;
+      }
+      textarea:focus {
+          border-color: var(--blue);
+          box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.12);
+      }
+      .quote-preview {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        gap: 10px;
+        margin-bottom: 8px;
+        padding: 8px 10px;
+        border-radius: 10px;
+        background: #f8fafc;
+        border: 1px solid var(--line);
+        color: var(--muted);
+        font-size: 12px;
+      }
+      .quote-preview strong { color: var(--text); }
+      .quote-preview button {
+        border: 0;
+        background: transparent;
+        color: var(--muted);
+        cursor: pointer;
+        font-weight: 800;
+      }
+      .attachment-tray {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+        margin-bottom: 8px;
+      }
+      .attachment-pill {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        max-width: 100%;
+        border-radius: 999px;
+        border: 1px solid var(--line);
+        background: #f8fafc;
+        padding: 5px 8px;
+        color: #334155;
+        font-size: 12px;
+      }
+      .attachment-pill button {
+        border: 0;
+        background: transparent;
+        color: var(--muted);
+        cursor: pointer;
+        font-weight: 800;
+      }
+      .composer-hint {
+        margin-top: 7px;
+        color: var(--muted);
+        font-size: 12px;
+        line-height: 1.45;
+      }
+      .sample-row { display: flex; flex-wrap: wrap; gap: 8px; margin: 10px 0 0; }
+      .chip {
+        border: 1px solid var(--line);
+        background: #fff;
+        border-radius: 999px;
+        padding: 6px 9px;
+        font-size: 12px;
+        cursor: pointer;
+        color: var(--text);
+      }
+      .is-hidden { display: none !important; }
+      .chip:hover { border-color: var(--blue); color: var(--blue); }
+      .send-button {
+        border-radius: 10px;
+        background: var(--blue);
+        border-color: var(--blue);
+        color: #fff;
+        font-size: 15px;
+        font-weight: 700;
+        padding: 10px 14px;
+        border: 1px solid var(--blue);
+        cursor: pointer;
+      }
+      .send-button:disabled { opacity: 0.58; cursor: not-allowed; }
+      .result-panel { padding: 18px; overflow: auto; }
+      .result-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: flex-start;
+        gap: 12px;
+        margin-bottom: 14px;
+      }
+      h1 { margin: 0 0 6px; font-size: 22px; }
+      .subtle { color: var(--muted); font-size: 13px; line-height: 1.6; }
+      .runtime-pill {
+        padding: 8px 10px;
+        border-radius: 999px;
+        background: var(--soft-blue);
+        color: #1d4ed8;
+        font-size: 12px;
+        white-space: nowrap;
+      }
+      .grid {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 12px;
+      }
+      .card {
+        border: 1px solid var(--line);
+        border-radius: 12px;
+        background: #fff;
+        padding: 14px;
+      }
+      .card.wide { grid-column: 1 / -1; }
+      .card-title {
+        display: flex;
+        justify-content: space-between;
+        gap: 10px;
+        align-items: center;
+        margin-bottom: 10px;
+        font-weight: 800;
+      }
+      .phase { font-size: 12px; color: var(--muted); font-weight: 600; }
+      .badge {
+        display: inline-flex;
+        align-items: center;
+        border-radius: 999px;
+        padding: 4px 8px;
+        font-size: 12px;
+        background: #f1f5f9;
+        color: #334155;
+      }
+      .badge.green { background: var(--soft-green); color: var(--green); }
+      .badge.blue { background: var(--soft-blue); color: var(--blue); }
+      .badge.amber { background: var(--soft-amber); color: var(--amber); }
+      .badge.red { background: #fef2f2; color: #dc2626; }
+      .kv-list { display: grid; gap: 8px; }
+      .kv { display: grid; grid-template-columns: 140px 1fr; gap: 8px; font-size: 13px; }
+      .kv .key { color: var(--muted); }
+      .message-box {
+        border: 1px solid var(--line);
+        border-radius: 10px;
+        padding: 12px;
+        background: #f8fafc;
+        line-height: 1.65;
+        font-size: 14px;
+      }
+      .decision-hero {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) minmax(220px, 0.45fr);
+        gap: 12px;
+        align-items: stretch;
+      }
+      .decision-main {
+        border: 1px solid #bfdbfe;
+        border-radius: 12px;
+        background: #eff6ff;
+        padding: 14px;
+      }
+      .decision-title {
+        margin-bottom: 8px;
+        font-size: 18px;
+        font-weight: 850;
+        color: #1d4ed8;
+      }
+      .task-board {
+        display: grid;
+        gap: 10px;
+      }
+      .task-card {
+        border: 1px solid var(--line);
+        border-radius: 12px;
+        padding: 12px;
+        background: #fff;
+      }
+      .task-card.selected {
+        border-color: #86efac;
+        background: #f0fdf4;
+      }
+      .task-card.pending {
+        border-color: #fdba74;
+        background: #fff7ed;
+      }
+      .task-head {
+        display: flex;
+        justify-content: space-between;
+        gap: 10px;
+        align-items: center;
+        margin-bottom: 8px;
+        font-weight: 850;
+      }
+      .task-meta {
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        gap: 8px;
+        margin-top: 8px;
+      }
+      .meta-pill {
+        border-radius: 10px;
+        background: rgba(255, 255, 255, 0.72);
+        border: 1px solid rgba(148, 163, 184, 0.32);
+        padding: 8px;
+        font-size: 12px;
+      }
+      .meta-pill .key {
+        display: block;
+        margin-bottom: 3px;
+        color: var(--muted);
+      }
+      .insight-list {
+        display: grid;
+        gap: 8px;
+      }
+      .insight-item {
+        border: 1px solid var(--line);
+        border-radius: 10px;
+        padding: 10px;
+        background: #fff;
+        font-size: 13px;
+        line-height: 1.6;
+      }
+      .insight-item strong {
+        display: block;
+        margin-bottom: 3px;
+        color: var(--text);
+      }
+      .timeline { display: grid; gap: 10px; }
+      .step { display: grid; grid-template-columns: 28px 1fr; gap: 10px; align-items: start; }
+      .step-number {
+        width: 28px;
+        height: 28px;
+        border-radius: 50%;
+        display: grid;
+        place-items: center;
+        background: var(--soft-blue);
+        color: var(--blue);
+        font-weight: 800;
+        font-size: 13px;
+      }
+      .step-title { font-weight: 750; margin-bottom: 3px; }
+      .step-text { color: var(--muted); font-size: 13px; line-height: 1.55; }
+      table { width: 100%; border-collapse: collapse; font-size: 13px; }
+      th, td { border-bottom: 1px solid var(--line); text-align: left; padding: 8px 6px; vertical-align: top; }
+      th { color: var(--muted); font-weight: 700; }
+      .empty { color: var(--muted); font-size: 13px; padding: 14px; background: #f8fafc; border-radius: 10px; }
+      pre {
+        margin: 0;
+        max-height: 340px;
+        overflow: auto;
+        background: #0f172a;
+        color: #e5e7eb;
+        border-radius: 10px;
+        padding: 12px;
+        font-size: 12px;
+        line-height: 1.5;
+      }
+      @media (max-width: 980px) {
+        .app-shell { grid-template-columns: 1fr; }
+        .decision-hero { grid-template-columns: 1fr; }
+        .task-meta { grid-template-columns: 1fr; }
+        .phone-panel, .result-panel { min-height: auto; }
+      }
+    </style>
+  </head>
+  <body>
+    <main class="app-shell">
+      <section class="phone-panel">
+        <div class="phone-header">
+          <div>
+            <div class="phone-title">合作伙伴微信模拟器</div>
+            <div class="subtle" style="color:#cbd5e1">模拟真实微信/企微碎片输入</div>
+          </div>
+          <div class="status-dot">本地服务</div>
+        </div>
+        <div id="chatBody" class="chat-body"></div>
+        <div class="input-area">
+          <div id="quotePreview" class="quote-preview is-hidden">
+            <div><strong>引用</strong>：<span id="quotePreviewText"></span></div>
+            <button id="clearQuoteButton" type="button" aria-label="取消引用">x</button>
+          </div>
+          <div id="attachmentTray" class="attachment-tray is-hidden"></div>
+          <div class="composer">
+            <button id="attachButton" class="attach-button" type="button" title="追加图片或文件" data-testid="attach-button">附件</button>
+            <input id="filePicker" class="is-hidden" type="file" multiple accept="image/*,.pdf,.xls,.xlsx,.doc,.docx,.txt" />
+            <textarea id="messageInput" data-testid="message-input" placeholder="输入微信消息...">车架号 LFMKN5BF2N3276921，三者改成300万，不要288</textarea>
+            <button id="sendButton" class="send-button" data-testid="send-button">发送</button>
+          </div>
+          <div class="composer-hint">支持图片、PDF（便携式文档格式）、Excel（电子表格）、Word（文字文档）等附件追加；本地验证仅使用文件名和类型模拟材料识别，不读取文件内容。</div>
+          <div class="sample-row" aria-label="快捷样例">
+            <button class="chip" data-sample="车架号 LFMKN5BF2N3276921，三者改成300万，不要288">报价修改</button>
+            <button class="chip" data-sample="改成500W吧，非车要548那款">省略式修改</button>
+            <button class="chip" data-sample="LBV41DU01NS563230&#10;LBVKY1105LSX96031&#10;LBVHY5105NM447881&#10;LBV6R4101NM429666&#10;LBVHZ1109HMJ96311">批量 VIN</button>
+            <button class="chip" data-sample="三者都改500万">批量更新</button>
+            <button class="chip" data-sample="车主张三">单独人员信息</button>
+            <button class="chip" data-sample="二维码过期了，重新发我">支付码过期</button>
+            <button class="chip" data-sample="确认">确认出单</button>
+            <button class="chip" data-sample="核保一下">核保</button>
+            <button class="chip" data-sample="非车改588">非车修改</button>
+            <button class="chip" data-sample="发票">发票</button>
+            <button class="chip" data-sample="车架号 LGWEF6A59NH123456">新车架号</button>
+          </div>
+        </div>
+      </section>
+
+      <section class="result-panel">
+        <div class="result-header">
+          <div>
+            <h1>双 Agent 验证结果</h1>
+            <div class="subtle">右侧展示当前所属智能体、处理阶段、核心返回、验证到的能力边界，以及结构化处理逻辑。</div>
+          </div>
+          <div id="runtimePill" class="runtime-pill">运行时检测中...</div>
+        </div>
+        <div class="grid">
+          <article class="card wide">
+            <div class="card-title">
+              <span>本次消息归属结论</span>
+              <span class="badge blue">Message → Task（消息到任务）</span>
+            </div>
+            <div id="currentMessageSummary"></div>
+          </article>
+          <article class="card wide">
+            <div class="card-title">
+              <span>任务维度归属视图</span>
+              <span class="badge green">Task View（任务视图）</span>
+            </div>
+            <div id="taskBoard"></div>
+          </article>
+          <article class="card">
+            <div class="card-title">
+              <span>材料理解 Agent（Material Understanding Agent，材料理解智能体）</span>
+              <span class="phase">阶段：输入理解 → 证据生成</span>
+            </div>
+            <div id="materialSummary" class="kv-list"></div>
+          </article>
+          <article class="card">
+            <div class="card-title">
+              <span>任务归属 Agent（Task Attribution Agent，任务归属智能体）</span>
+              <span class="phase">阶段：实体关系推理 → 归属决策</span>
+            </div>
+            <div id="attributionSummary" class="kv-list"></div>
+          </article>
+          <article class="card wide">
+            <div class="card-title">
+              <span>模型处理与思考逻辑（结构化展示）</span>
+              <span class="badge blue">人可读推理链</span>
+            </div>
+            <div id="logicTimeline" class="timeline"></div>
+          </article>
+          <article class="card wide">
+            <div class="card-title">
+              <span>Evidence（证据）明细</span>
+              <span class="badge green">字段级来源与校验</span>
+            </div>
+            <div id="evidenceTable"></div>
+          </article>
+          <article class="card">
+            <div class="card-title">
+              <span>验证到的能力</span>
+              <span class="badge green">Capabilities（能力）</span>
+            </div>
+            <div id="capabilities"></div>
+          </article>
+          <article class="card">
+            <div class="card-title">
+              <span>当前边界与护栏</span>
+              <span class="badge amber">Boundaries（边界）</span>
+            </div>
+            <div id="boundaries"></div>
+          </article>
+          <article class="card wide">
+            <div class="card-title">
+              <span>原始 JSON（JavaScript Object Notation，结构化数据）</span>
+              <span class="badge">调试视图</span>
+            </div>
+            <pre id="rawJson">等待验证...</pre>
+          </article>
+        </div>
+      </section>
+    </main>
+
+    <script>
+      const input = document.querySelector("#messageInput");
+      const sendButton = document.querySelector("#sendButton");
+      const attachButton = document.querySelector("#attachButton");
+      const filePicker = document.querySelector("#filePicker");
+      const attachmentTray = document.querySelector("#attachmentTray");
+      const quotePreview = document.querySelector("#quotePreview");
+      const quotePreviewText = document.querySelector("#quotePreviewText");
+      const clearQuoteButton = document.querySelector("#clearQuoteButton");
+      const chatBody = document.querySelector("#chatBody");
+      const runtimePill = document.querySelector("#runtimePill");
+      const currentMessageSummary = document.querySelector("#currentMessageSummary");
+      const taskBoard = document.querySelector("#taskBoard");
+      const materialSummary = document.querySelector("#materialSummary");
+      const attributionSummary = document.querySelector("#attributionSummary");
+      const logicTimeline = document.querySelector("#logicTimeline");
+      const evidenceTable = document.querySelector("#evidenceTable");
+      const capabilities = document.querySelector("#capabilities");
+      const boundaries = document.querySelector("#boundaries");
+      const rawJson = document.querySelector("#rawJson");
+      const API_BASE =
+        window.location.protocol === "file:"
+          ? "http://127.0.0.1:8000"
+          : window.location.origin;
+
+      let selectedAttachments = [];
+      let quotedMessage = null;
+      let taskCounter = 0;
+      let lastRunData = null;
+      let runtimeState = null;
+      let focusedTaskId = null;
+      let recentTaskSetIds = [];
+      let lastQuotePlanContext = {};
+      const chatMessages = [];
+      const taskList = [];
+
+      function apiUrl(path) {
+        return `${API_BASE}${path}`;
+      }
+
+      function escapeHtml(value) {
+        return String(value ?? "")
+          .replaceAll("&", "&amp;")
+          .replaceAll("<", "&lt;")
+          .replaceAll(">", "&gt;")
+          .replaceAll('"', "&quot;")
+          .replaceAll("'", "&#39;");
+      }
+
+      function shortText(text, maxLength = 72) {
+        const value = (text || "").replace(/\s+/g, " ").trim();
+        return value.length > maxLength ? `${value.slice(0, maxLength)}...` : value;
+      }
+
+      function decisionLabel(decision) {
+        const labels = {
+          attach_to_active_task: "归集到当前活跃任务",
+          attach_to_historical_task: "归集到历史任务",
+          create_new_task: "新增任务草稿",
+          create_multiple_tasks: "批量拆分为多个独立任务",
+          attach_to_task_set: "归属最近批量任务集合",
+          wake_historical_task: "唤醒历史任务",
+          hold_for_confirmation: "等待确认后再归属",
+          route_to_manual: "转人工处理",
+          ignore_or_chat: "忽略或普通闲聊",
+        };
+        return labels[decision] || decision;
+      }
+
+      function riskLabel(risk) {
+        const labels = { low: "低风险", medium: "中风险", high: "高风险" };
+        return labels[risk] || risk;
+      }
+
+      function stageLabel(stage) {
+        const labels = {
+          collecting_materials: "材料收集中",
+          quote_preparing: "报价准备",
+          quote_confirming: "报价确认",
+          quote_modifying: "报价修改",
+          insuring: "投保中",
+          underwriting: "核保/审核中",
+          payment: "支付阶段",
+          policy_delivering: "保单发送",
+          invoicing: "发票处理",
+          completed: "已完成",
+          suspended: "已暂停",
+          manual: "人工处理",
+        };
+        return labels[stage] || stage || "无";
+      }
+
+      function sourceTypeLabel(sourceType) {
+        const labels = {
+          ocr: "OCR（光学字符识别）",
+          text: "文本",
+          voice_transcript: "语音转写",
+          document_layout: "版式文档",
+          quoted_context: "引用上下文",
+        };
+        return labels[sourceType] || sourceType || "未知来源";
+      }
+
+      function badgeClassForRisk(risk) {
+        if (risk === "high") return "red";
+        if (risk === "medium") return "amber";
+        return "green";
+      }
+
+      function nextTaskId() {
+        taskCounter += 1;
+        return `Task_${String(taskCounter).padStart(6, "0")}`;
+      }
+
+      function nowIso() {
+        return new Date().toISOString();
+      }
+
+      function clone(value) {
+        return JSON.parse(JSON.stringify(value));
+      }
+
+      function activeTasks() {
+        return taskList.filter((task) => task.status === "active");
+      }
+
+      function intentLabel(intent) {
+        const labels = {
+          modify_quote: "修改报价方案",
+          confirm_quote: "确认报价/准备投保",
+          progress_query: "查询或催促进度",
+          underwriting_request: "核保/审核处理",
+          payment_code_request: "请求支付二维码",
+          payment_completed: "支付完成",
+          send_policy: "索要保单",
+          policy_delivered: "保单已发送",
+          invoice_request: "发票处理",
+          invoice_status: "发票开具状态",
+          quote_result: "报价完成待确认",
+          quote_status: "报价处理中",
+          insurance_status: "投保处理中",
+          abandon_task: "放弃出单",
+          transfer_manual: "转人工",
+          collect_material: "补充材料/信息收集",
+          start_quote: "发起新车报价任务",
+          new_or_existing_quote: "新建或匹配报价任务",
+          new_batch_quote: "发起批量报价任务",
+          batch_modify_quote: "批量修改报价方案",
+          supplement_party_info: "补充人员信息",
+          supplement_attachment_material: "补充附件材料",
+          business_status_or_reference: "业务状态/凭证信息",
+          chat: "闲聊或无业务意图",
+        };
+        return labels[intent] || intent || "未识别";
+      }
+
+      function inferIntent(material, event) {
+        if (material.current_intent && material.current_intent !== "unknown") return material.current_intent;
+        const intents = material.evidence_list
+          .filter((item) => item.field_name === "intentHint")
+          .map((item) => item.normalized_value);
+        if (intents.includes("modify_quote")) return "modify_quote";
+        if (intents.includes("confirm_quote")) return "confirm_quote";
+        if (intents.includes("underwriting_request")) return "underwriting_request";
+        if (intents.includes("payment_code_request")) return "payment_code_request";
+        if (intents.includes("payment_completed")) return "payment_completed";
+        if (intents.includes("progress_query")) return "progress_query";
+        if (intents.includes("send_policy")) return "send_policy";
+        if (intents.includes("policy_delivered")) return "policy_delivered";
+        if (intents.includes("invoice_request")) return "invoice_request";
+        if (intents.includes("invoice_status")) return "invoice_status";
+        if (intents.includes("quote_result")) return "quote_result";
+        if (intents.includes("quote_status")) return "quote_status";
+        if (intents.includes("insurance_status")) return "insurance_status";
+        if (intents.includes("abandon_task")) return "abandon_task";
+        if (intents.includes("transfer_manual")) return "transfer_manual";
+        if (material.evidence_list.some((item) => item.entity_type === "vehicle")) return taskList.length ? "collect_material" : "start_quote";
+        if (material.evidence_list.some((item) => item.entity_type === "party")) return "collect_material";
+        if (event.attachments.length) return "collect_material";
+        return "chat";
+      }
+
+      function taskFromEvidence(taskId, event, material, attribution) {
+        const task = {
+          task_id: taskId,
+          conversation_id: event.conversation_id,
+          stage: attribution.state_update_suggestion?.next_stage || stageForIntent(inferIntent(material, event)),
+          status: "active",
+          vehicle_facts: {},
+          party_facts: [],
+          quote_plan_summary: null,
+          last_bot_action: null,
+          pending_question: null,
+          last_active_at: nowIso(),
+          local_message_count: 0,
+          local_last_intent: null,
+          local_last_changes: [],
+        };
+        return task;
+      }
+
+      function applyEvidenceToTask(task, evidenceList, options = {}) {
+        const changes = [];
+        const dryRun = Boolean(options.dryRun);
+        const party = task.party_facts[0] || { role: "owner", name: null, id_no: null, mobile: null };
+        const quotePieces = [];
+        const seen = new Set();
+
+        evidenceList.forEach((item) => {
+          const evidenceKey = `${item.entity_type}:${item.field_name}:${item.normalized_value}`;
+          if (seen.has(evidenceKey)) return;
+          seen.add(evidenceKey);
+          if (item.entity_type === "intent") {
+            changes.push({
+              type: "instruction",
+              field_name: item.field_name,
+              field_label: item.field_label,
+              old_value: null,
+              new_value: item.normalized_value,
+              description: `触发指令：${intentLabel(item.normalized_value)}`,
+            });
+            return;
+          }
+
+          if (item.entity_type === "vehicle") {
+            const oldValue = task.vehicle_facts[item.field_name] || null;
+            if (item.field_name === "frameNo" && oldValue && oldValue !== item.normalized_value) {
+              changes.push({
+                type: "conflict",
+                field_name: item.field_name,
+                field_label: item.field_label,
+                old_value: oldValue,
+                new_value: item.normalized_value,
+                description: `VIN（车架号）不可更新：任务已有 ${oldValue}，本次新 VIN ${item.normalized_value} 不写入该任务。`,
+              });
+              return;
+            }
+            const changeType = oldValue ? (oldValue === item.normalized_value ? "unchanged" : "updated") : "created";
+            changes.push({
+              type: changeType,
+              field_name: item.field_name,
+              field_label: item.field_label,
+              old_value: oldValue,
+              new_value: item.normalized_value,
+              description: changeType === "created"
+                ? `新提取车辆槽位：${item.field_label}=${item.normalized_value}`
+                : changeType === "updated"
+                  ? `更新车辆槽位：${item.field_label} 从 ${oldValue} 改为 ${item.normalized_value}`
+                  : `车辆槽位无变化：${item.field_label}=${item.normalized_value}`,
+            });
+            if (!dryRun && changeType !== "unchanged") task.vehicle_facts[item.field_name] = item.normalized_value;
+            return;
+          }
+
+          if (item.entity_type === "party") {
+            const fieldMap = {
+              ownerName: "name",
+              applicantName: "name",
+              insuredName: "name",
+              ownerIdNo: "id_no",
+              ownerMobile: "mobile",
+            };
+            const localField = fieldMap[item.field_name] || "name";
+            const oldValue = party[localField] || null;
+            const changeType = oldValue ? (oldValue === item.normalized_value ? "unchanged" : "updated") : "created";
+            changes.push({
+              type: changeType,
+              field_name: item.field_name,
+              field_label: item.field_label,
+              old_value: oldValue,
+              new_value: item.normalized_value,
+              description: changeType === "created"
+                ? `新提取人员槽位：${item.field_label}=${item.normalized_value}`
+                : changeType === "updated"
+                  ? `更新人员槽位：${item.field_label} 从 ${oldValue} 改为 ${item.normalized_value}`
+                  : `人员槽位无变化：${item.field_label}=${item.normalized_value}`,
+            });
+            if (!dryRun && changeType !== "unchanged") {
+              party.role = item.role || party.role || "owner";
+              party[localField] = item.normalized_value;
+            }
+            return;
+          }
+
+          if (item.entity_type === "insurance_plan" || item.entity_type === "non_auto_product") {
+            quotePieces.push(`${item.field_label}=${item.normalized_value}`);
+            changes.push({
+              type: "updated",
+              field_name: item.field_name,
+              field_label: item.field_label,
+              old_value: task.quote_plan_summary,
+              new_value: item.normalized_value,
+              description: `报价方案信息变更：${item.field_label}=${item.normalized_value}`,
+            });
+          }
+        });
+
+        if (!dryRun && (party.name || party.id_no || party.mobile)) {
+          task.party_facts[0] = party;
+        }
+        if (!dryRun && quotePieces.length) {
+          task.quote_plan_summary = quotePieces.join("；");
+        }
+        return changes;
+      }
+
+      function stageForIntent(intent) {
+        const stages = {
+          modify_quote: "quote_modifying",
+          confirm_quote: "insuring",
+          underwriting_request: "underwriting",
+          payment_code_request: "payment",
+          payment_completed: "policy_delivering",
+          send_policy: "policy_delivering",
+          policy_delivered: "completed",
+          invoice_request: "invoicing",
+          invoice_status: "invoicing",
+          quote_result: "quote_confirming",
+          quote_status: "quote_preparing",
+          insurance_status: "insuring",
+          abandon_task: "suspended",
+          start_quote: "quote_preparing",
+          new_or_existing_quote: "quote_preparing",
+          new_batch_quote: "quote_preparing",
+          batch_modify_quote: "quote_modifying",
+          collect_material: "collecting_materials",
+        };
+        return stages[intent] || "collecting_materials";
+      }
+
+      function evidenceForVehicle(evidenceList, frameNo) {
+        return evidenceList.filter((item) => item.field_name !== "frameNo" || item.normalized_value === frameNo);
+      }
+
+      function displayTaskIds(taskIds) {
+        if (!taskIds || !taskIds.length) return "无";
+        return taskIds.join("、");
+      }
+
+      function derivePolicyResult(attribution) {
+        if (attribution.decision === "route_to_manual") {
+          return { result: "route_to_manual", reason: "任务归属 Agent（智能体）认为存在高风险或冲突，应转人工。" };
+        }
+        if (attribution.required_confirmation || attribution.decision === "hold_for_confirmation") {
+          return { result: "require_confirmation", reason: attribution.confirmation_question || "证据不足，需要用户确认后再归属。" };
+        }
+        return { result: "approved", reason: "本地工作台允许执行该归属建议。" };
+      }
+
+      function applyAttributionToWorkbench(event, material, attribution) {
+        const intent = inferIntent(material, event);
+        let selectedTaskId = attribution.selected_task_id;
+        let selectedTaskIds = attribution.selected_task_ids ? [...attribution.selected_task_ids] : (selectedTaskId ? [selectedTaskId] : []);
+        let attributionLabel = decisionLabel(attribution.decision);
+        let changes = [];
+        let targetTask = selectedTaskId ? taskList.find((task) => task.task_id === selectedTaskId) : null;
+
+        if (attribution.decision === "hold_for_confirmation" || attribution.decision === "route_to_manual" || attribution.required_confirmation) {
+          const previewTarget = targetTask ? clone(targetTask) : null;
+          changes = previewTarget
+            ? applyEvidenceToTask(previewTarget, material.evidence_list, { dryRun: true })
+            : [];
+          if (!changes.length) {
+            changes = [{
+              type: "pending",
+              description: attribution.confirmation_question || "当前证据不足以自动归属或写入任务，需要先确认。"
+            }];
+          }
+          attributionLabel = attribution.decision === "route_to_manual"
+            ? `转人工处理${selectedTaskId ? `，候选任务 ${selectedTaskId}` : ""}`
+            : `等待确认${selectedTaskId ? `，候选任务 ${selectedTaskId}` : ""}`;
+        } else if (attribution.decision === "create_new_task") {
+          selectedTaskId = nextTaskId();
+          targetTask = taskFromEvidence(selectedTaskId, event, material, attribution);
+          targetTask.local_message_count = 1;
+          targetTask.local_last_intent = intent;
+          targetTask.last_active_at = nowIso();
+          changes = applyEvidenceToTask(targetTask, material.evidence_list, { dryRun: false });
+          targetTask.local_last_changes = changes;
+          taskList.push(targetTask);
+          attributionLabel = `新增新任务 ${selectedTaskId}`;
+          focusedTaskId = selectedTaskId;
+          recentTaskSetIds = [];
+        } else if (attribution.decision === "create_multiple_tasks") {
+          const vehicleMentions = attribution.new_task_hint?.vehicle_mentions || material.vehicle_mentions.map((item) => ({ frameNo: item.frame_no })).filter((item) => item.frameNo);
+          selectedTaskIds = [];
+          vehicleMentions.forEach((vehicle) => {
+            const frameNo = vehicle.frameNo || vehicle.frame_no;
+            const newTaskId = nextTaskId();
+            const task = taskFromEvidence(newTaskId, event, material, attribution);
+            task.local_message_count = 1;
+            task.local_last_intent = intent;
+            task.last_active_at = nowIso();
+            const scopedEvidence = frameNo ? evidenceForVehicle(material.evidence_list, frameNo) : material.evidence_list;
+            const taskChanges = applyEvidenceToTask(task, scopedEvidence, { dryRun: false });
+            task.local_last_changes = taskChanges;
+            taskList.push(task);
+            selectedTaskIds.push(newTaskId);
+            changes.push(...taskChanges.map((change) => ({ ...change, description: `${newTaskId}：${change.description}` })));
+          });
+          selectedTaskId = selectedTaskIds[0] || null;
+          recentTaskSetIds = selectedTaskIds;
+          focusedTaskId = selectedTaskId;
+          attributionLabel = `批量新增 ${selectedTaskIds.length} 个独立任务：${displayTaskIds(selectedTaskIds)}`;
+        } else if (attribution.decision === "attach_to_task_set") {
+          selectedTaskIds = attribution.selected_task_ids || recentTaskSetIds;
+          selectedTaskId = selectedTaskIds[0] || null;
+          selectedTaskIds.forEach((taskId) => {
+            const task = taskList.find((item) => item.task_id === taskId);
+            if (!task) return;
+            const taskChanges = applyEvidenceToTask(task, material.evidence_list, { dryRun: false });
+            task.stage = attribution.state_update_suggestion?.next_stage || task.stage;
+            task.local_message_count = (task.local_message_count || 0) + 1;
+            task.local_last_intent = intent;
+            task.local_last_changes = taskChanges.length
+              ? taskChanges
+              : [{ type: "none", description: `任务 ${taskId} 未发生槽位变化，仅保留批量修改指令。` }];
+            task.last_active_at = nowIso();
+            changes.push(...task.local_last_changes.map((change) => ({ ...change, description: `${taskId}：${change.description}` })));
+          });
+          focusedTaskId = selectedTaskId;
+          attributionLabel = `归属最近批量任务集合：${displayTaskIds(selectedTaskIds)}`;
+        } else if (targetTask) {
+          const before = clone(targetTask);
+          changes = applyEvidenceToTask(targetTask, material.evidence_list, { dryRun: false });
+          targetTask.stage = attribution.state_update_suggestion?.next_stage || targetTask.stage;
+          targetTask.local_message_count = (targetTask.local_message_count || 0) + 1;
+          targetTask.local_last_intent = intent;
+          targetTask.local_last_changes = changes;
+          targetTask.last_active_at = nowIso();
+          attributionLabel = `归属旧任务 ${selectedTaskId}`;
+          if (!changes.length) targetTask.local_last_changes = [{ type: "none", description: `任务 ${before.task_id} 未发生槽位变化，仅保留消息关联。` }];
+          focusedTaskId = selectedTaskId;
+          if (!recentTaskSetIds.includes(selectedTaskId)) recentTaskSetIds = [];
+        } else if (attribution.decision === "ignore_or_chat") {
+          attributionLabel = "闲聊消息，无需归属任务";
+          changes = [{ type: "none", description: "未识别到车险作业相关槽位或指令，不创建、不更新任务。" }];
+        } else {
+          changes = [{ type: "pending", description: attribution.confirmation_question || "暂未能确定归属任务，需要补充信息或人工确认。" }];
+        }
+
+        if (material.quote_plan_mentions?.length) {
+          lastQuotePlanContext = {
+            intent,
+            quote_plan_mentions: material.quote_plan_mentions,
+            updated_at: nowIso(),
+          };
+        }
+
+        return {
+          intent,
+          selected_task_id: selectedTaskId,
+          selected_task_ids: selectedTaskIds,
+          attribution_label: attributionLabel,
+          changes,
+          quote_display_text: quotedMessage?.text || null,
+          quote_note: quotedMessage ? "引用仅作为两条消息的显示关联，本次理解对象仍是最终发送的消息。" : null,
+        };
+      }
+
+      function fileTypeLabel(fileType) {
+        const labels = {
+          image: "图片",
+          pdf: "PDF",
+          excel: "Excel",
+          word: "Word",
+          other: "文件",
+        };
+        return labels[fileType] || "文件";
+      }
+
+      function inferFileType(file) {
+        const name = file.name.toLowerCase();
+        if (file.type.startsWith("image/")) return "image";
+        if (name.endsWith(".pdf")) return "pdf";
+        if (name.endsWith(".xls") || name.endsWith(".xlsx")) return "excel";
+        if (name.endsWith(".doc") || name.endsWith(".docx")) return "word";
+        return "other";
+      }
+
+      function inferMessageType(text, attachments, quote) {
+        if (attachments.length && text) return "mixed";
+        if (attachments.length === 1 && attachments[0].file_type === "image") return "image";
+        if (attachments.length) return "file";
+        if (quote) return "quoted_message";
+        return "text";
+      }
+
+      function renderQuotePreview() {
+        if (!quotedMessage) {
+          quotePreview.classList.add("is-hidden");
+          quotePreviewText.textContent = "";
+          return;
+        }
+        quotePreviewText.textContent = shortText(quotedMessage.text);
+        quotePreview.classList.remove("is-hidden");
+      }
+
+      function setQuotedMessage(message) {
+        quotedMessage = message;
+        renderQuotePreview();
+        input.focus();
+      }
+
+      function clearQuote() {
+        quotedMessage = null;
+        renderQuotePreview();
+      }
+
+      function renderAttachmentTray() {
+        attachmentTray.innerHTML = "";
+        if (!selectedAttachments.length) {
+          attachmentTray.classList.add("is-hidden");
+          return;
+        }
+        selectedAttachments.forEach((attachment, index) => {
+          const pill = document.createElement("div");
+          pill.className = "attachment-pill";
+          const label = document.createElement("span");
+          label.textContent = `${fileTypeLabel(attachment.file_type)}：${attachment.file_ref}`;
+          const remove = document.createElement("button");
+          remove.type = "button";
+          remove.textContent = "x";
+          remove.setAttribute("aria-label", `移除附件 ${attachment.file_ref}`);
+          remove.addEventListener("click", () => {
+            selectedAttachments.splice(index, 1);
+            renderAttachmentTray();
+          });
+          pill.append(label, remove);
+          attachmentTray.appendChild(pill);
+        });
+        attachmentTray.classList.remove("is-hidden");
+      }
+
+      function addBubble(type, text, options = {}) {
+        const message = {
+          id: `msg_${Date.now()}_${chatMessages.length}`,
+          type,
+          text,
+          attachments: options.attachments || [],
+          quoteText: options.quoteText || "",
+        };
+        chatMessages.push(message);
+
+        const row = document.createElement("div");
+        row.className = `bubble-wrap ${type}`;
+        const bubble = document.createElement("div");
+        bubble.className = `bubble ${type}`;
+
+        if (message.quoteText) {
+          const quote = document.createElement("div");
+          quote.className = "quote-snippet";
+          quote.textContent = `引用：${shortText(message.quoteText)}`;
+          bubble.appendChild(quote);
+        }
+
+        const body = document.createElement("div");
+        body.textContent = text || "[附件消息]";
+        bubble.appendChild(body);
+
+        if (message.attachments.length) {
+          const attachmentBox = document.createElement("div");
+          attachmentBox.className = "bubble-attachments";
+          message.attachments.forEach((attachment) => {
+            const item = document.createElement("span");
+            item.className = "bubble-attachment";
+            item.textContent = `${fileTypeLabel(attachment.file_type)}：${attachment.file_ref}`;
+            attachmentBox.appendChild(item);
+          });
+          bubble.appendChild(attachmentBox);
+        }
+
+        const quoteButton = document.createElement("button");
+        quoteButton.className = "quote-message-button";
+        quoteButton.type = "button";
+        quoteButton.dataset.testid = `quote-${message.id}`;
+        quoteButton.textContent = "引用";
+        quoteButton.addEventListener("click", () => setQuotedMessage(message));
+
+        if (type === "user") {
+          row.append(quoteButton, bubble);
+        } else {
+          row.append(bubble, quoteButton);
+        }
+        chatBody.appendChild(row);
+        chatBody.scrollTop = chatBody.scrollHeight;
+        return message;
+      }
+
+      function kv(key, value, badgeClass = "") {
+        const safeValue = value === undefined || value === null || value === "" ? "无" : value;
+        return `<div class="kv"><div class="key">${escapeHtml(key)}</div><div>${badgeClass ? `<span class="badge ${badgeClass}">${escapeHtml(safeValue)}</span>` : escapeHtml(safeValue)}</div></div>`;
+      }
+
+      function list(items) {
+        if (!items || !items.length) return `<div class="empty">暂无</div>`;
+        return `<ul style="margin:0;padding-left:18px;line-height:1.8;font-size:13px">${items.map((item) => `<li>${escapeHtml(item)}</li>`).join("")}</ul>`;
+      }
+
+      function renderCurrentMessage(data) {
+        const event = data.event;
+        const attribution = data.task_attribution;
+        const material = data.material_understanding;
+        const workbench = data.workbench || {};
+        const taskTarget = displayTaskIds(workbench.selected_task_ids || attribution.selected_task_ids || (workbench.selected_task_id ? [workbench.selected_task_id] : []));
+        const attachmentText = event.attachments.length
+          ? event.attachments.map((item) => `${fileTypeLabel(item.file_type)}：${item.file_ref}`).join("；")
+          : "无";
+        const quoteText = workbench.quote_display_text || "无";
+        const changes = (workbench.changes || []).map((change) => change.description);
+        currentMessageSummary.innerHTML = `
+          <div class="decision-hero">
+            <div class="decision-main">
+              <div class="decision-title">${escapeHtml(workbench.attribution_label || decisionLabel(attribution.decision))}</div>
+              <div class="message-box">
+                <strong>当前验证消息：</strong>${escapeHtml(event.content_text || "[附件消息]")}<br>
+                <strong>当前意图：</strong>${escapeHtml(intentLabel(workbench.intent))}<br>
+                <strong>归属目标：</strong>${escapeHtml(taskTarget)}<br>
+                <strong>信息变更：</strong>${changes.length ? `<ul style="margin:6px 0 0;padding-left:18px">${changes.map((item) => `<li>${escapeHtml(item)}</li>`).join("")}</ul>` : "无信息变更"}<br>
+                <strong>归属依据：</strong>${escapeHtml(attribution.business_reason)}
+              </div>
+              ${workbench.quote_note ? `<div class="message-box" style="margin-top:10px"><strong>引用说明：</strong>${escapeHtml(workbench.quote_note)}</div>` : ""}
+            </div>
+            <div class="kv-list">
+              ${kv("消息 Event ID", event.event_id)}
+              ${kv("消息类型 Type", event.message_type, "blue")}
+              ${kv("附件 Attachments", attachmentText)}
+              ${kv("引用显示关联", quoteText)}
+              ${kv("证据数量 Evidence", `${material.evidence_list.length} 条`, "green")}
+              ${kv("风险 Risk", riskLabel(attribution.risk_level), badgeClassForRisk(attribution.risk_level))}
+            </div>
+          </div>
+        `;
+      }
+
+      function renderTaskBoard(data) {
+        const attribution = data?.task_attribution || {};
+        const policy = data?.policy_result || { result: "waiting", reason: "等待消息验证。" };
+        const workbench = data?.workbench || {};
+        const selectedTaskId = workbench.selected_task_id || attribution.selected_task_id;
+        const selectedTaskIds = workbench.selected_task_ids || attribution.selected_task_ids || (selectedTaskId ? [selectedTaskId] : []);
+        const selectedTaskSet = new Set(selectedTaskIds);
+        const pendingClass = attribution.required_confirmation || attribution.decision === "hold_for_confirmation" ? "pending" : "";
+        const taskCards = taskList.length
+          ? taskList.map((task) => {
+              const selected = selectedTaskSet.has(task.task_id);
+              const changes = (task.local_last_changes || []).map((item) => item.description);
+              const vehicleText = Object.entries(task.vehicle_facts || {}).map(([key, value]) => `${key}=${value}`).join("；") || "暂无";
+              const party = (task.party_facts || [])[0] || {};
+              const partyText = [party.name && `姓名=${party.name}`, party.id_no && `证件=${party.id_no}`, party.mobile && `手机=${party.mobile}`].filter(Boolean).join("；") || "暂无";
+              return `
+                <div class="task-card ${selected ? "selected" : ""}">
+                  <div class="task-head">
+                    <span>${escapeHtml(task.task_id)}${selected ? "（本次归属）" : ""}</span>
+                    <span class="badge ${selected ? "green" : "blue"}">${escapeHtml(stageLabel(task.stage))}</span>
+                  </div>
+                  <div class="task-meta">
+                    <div class="meta-pill"><span class="key">车辆槽位</span>${escapeHtml(vehicleText)}</div>
+                    <div class="meta-pill"><span class="key">人员槽位</span>${escapeHtml(partyText)}</div>
+                    <div class="meta-pill"><span class="key">报价方案</span>${escapeHtml(task.quote_plan_summary || "暂无")}</div>
+                  </div>
+                  <div class="message-box" style="margin-top:10px">
+                    <strong>最近意图：</strong>${escapeHtml(intentLabel(task.local_last_intent))}<br>
+                    <strong>最近变更：</strong>${changes.length ? `<ul style="margin:6px 0 0;padding-left:18px">${changes.map((item) => `<li>${escapeHtml(item)}</li>`).join("")}</ul>` : "暂无"}
+                  </div>
+                </div>
+              `;
+            }).join("")
+          : `<div class="empty">任务列表为空。发送第一条可识别的车险业务消息后，页面会生成 Task_000001 这类不重复任务编号。</div>`;
+        const candidateItems = attribution.target_task_candidates || [];
+        const candidateCards = candidateItems.length
+          ? `<div class="insight-item"><strong>本次候选任务评分</strong>${list(candidateItems.map((candidate) => `${candidate.task_id}：${Math.round(candidate.score)} 分；${candidate.reason}`))}</div>`
+          : `<div class="insight-item"><strong>本次候选任务评分</strong><div class="empty">没有候选任务，或当前消息无需任务归属。</div></div>`;
+        taskBoard.innerHTML = `
+          <div class="task-board">
+            <div class="task-card ${selectedTaskId ? "selected" : pendingClass}">
+              <div class="task-head">
+                <span>本次归属：${escapeHtml(workbench.attribution_label || decisionLabel(attribution.decision))}</span>
+                <span class="badge ${badgeClassForRisk(attribution.risk_level)}">${escapeHtml(riskLabel(attribution.risk_level))}</span>
+              </div>
+              <div>${escapeHtml(attribution.business_reason || "等待消息验证。")}</div>
+              <div class="task-meta">
+                <div class="meta-pill"><span class="key">目标任务</span>${escapeHtml(displayTaskIds(selectedTaskIds))}</div>
+                <div class="meta-pill"><span class="key">当前意图</span>${escapeHtml(intentLabel(workbench.intent))}</div>
+                <div class="meta-pill"><span class="key">策略护栏</span>${escapeHtml(policy.result)}：${escapeHtml(policy.reason)}</div>
+              </div>
+              ${attribution.confirmation_question ? `<div class="message-box" style="margin-top:10px"><strong>需要追问：</strong>${escapeHtml(attribution.confirmation_question)}</div>` : ""}
+            </div>
+            <div class="insight-item"><strong>当前任务列表</strong></div>
+            ${taskCards}
+            ${candidateCards}
+          </div>
+        `;
+      }
+
+      function renderMaterialUnderstanding(data) {
+        const material = data.material_understanding;
+        const workbench = data.workbench || {};
+        const docs = material.documents.map((doc) => `${doc.document_name}（${doc.document_type}，置信度 ${Math.round(doc.confidence * 100)}%）`);
+        const evidenceSeen = new Set();
+        const evidence = material.evidence_list
+          .filter((item) => {
+            const key = `${item.field_name}:${item.normalized_value}`;
+            if (evidenceSeen.has(key)) return false;
+            evidenceSeen.add(key);
+            return true;
+          })
+          .map((item) => `${item.field_label}=${item.normalized_value}，来源 ${sourceTypeLabel(item.source_type)}，置信度 ${Math.round(item.confidence * 100)}%`);
+        const risks = material.risk_flags.map((risk) => `${risk.risk_type}：${risk.description}`);
+        const changes = (workbench.changes || []).map((change) => change.description);
+        const runtime = material.model_runtime || {};
+        materialSummary.innerHTML = `
+          <div class="insight-list">
+            <div class="insight-item">
+              <strong>模型运行状态</strong>
+              ${escapeHtml(runtime.fallback_used ? `未使用真实大模型：${runtime.reason || "模型不可用"}` : `已使用真实大模型：${runtime.provider} / ${runtime.model}`)}
+            </div>
+            <div class="insight-item">
+              <strong>当前模型理解后的意图</strong>
+              ${escapeHtml(intentLabel(workbench.intent))}
+            </div>
+            <div class="insight-item">
+              <strong>本次消息识别了什么材料？</strong>
+              ${list(docs)}
+            </div>
+            <div class="insight-item">
+              <strong>本次新提取或更新了什么槽位？</strong>
+              ${list(changes)}
+            </div>
+            <div class="insight-item">
+              <strong>原始 Evidence（证据）抽取结果</strong>
+              ${list(evidence)}
+            </div>
+            <div class="insight-item">
+              <strong>材料理解后的动作建议</strong>
+              ${escapeHtml(material.material_action_hint.reason)}<br>
+              <span class="badge green" style="margin-top:6px">${escapeHtml(material.material_action_hint.next_route)}</span>
+            </div>
+            <div class="insight-item">
+              <strong>风险与缺口</strong>
+              ${list(risks)}
+            </div>
+          </div>
+        `;
+      }
+
+      function renderAttributionReasoning(data) {
+        const attribution = data.task_attribution;
+        const workbench = data.workbench || {};
+        const graph = attribution.entity_graph_summary || {};
+        const candidates = attribution.target_task_candidates || [];
+        const usedEvidenceSet = new Set(attribution.used_evidence_ids || []);
+        const usedEvidence = data.material_understanding.evidence_list
+          .filter((item) => usedEvidenceSet.has(item.evidence_id))
+          .map((item) => `${item.field_label}=${item.normalized_value}（${item.evidence_id}）`);
+        const candidateReasons = candidates.map((candidate) => `${candidate.task_id}：${Math.round(candidate.score)} 分；${candidate.reason}`);
+        const runtime = attribution.model_runtime || {};
+        attributionSummary.innerHTML = `
+          <div class="insight-list">
+            <div class="insight-item">
+              <strong>模型运行状态</strong>
+              ${escapeHtml(runtime.fallback_used ? `未使用真实大模型：${runtime.reason || "模型不可用"}` : `已使用真实大模型：${runtime.provider} / ${runtime.model}`)}
+            </div>
+            <div class="insight-item">
+              <strong>它把消息归到哪里？</strong>
+              ${escapeHtml(workbench.attribution_label || decisionLabel(attribution.decision))}；目标任务：${escapeHtml(displayTaskIds(workbench.selected_task_ids || attribution.selected_task_ids || (workbench.selected_task_id ? [workbench.selected_task_id] : [])))}。
+            </div>
+            <div class="insight-item">
+              <strong>归属依据是什么？</strong>
+              ${escapeHtml(attribution.business_reason)}
+            </div>
+            <div class="insight-item">
+              <strong>引用如何处理？</strong>
+              ${escapeHtml(workbench.quote_note || "本次没有引用消息；模型理解对象就是当前发送消息。")}
+            </div>
+            <div class="insight-item">
+              <strong>用到了哪些实体关系？</strong>
+              ${list([...(graph.detected_entities || []).map((item) => `检测实体：${item}`), ...(graph.used_relationships || []).map((item) => `关系：${item}`), ...(graph.conflicts || []).map((item) => `冲突：${item}`)])}
+            </div>
+            <div class="insight-item">
+              <strong>使用了哪些 Evidence（证据）？</strong>
+              ${list(usedEvidence)}
+            </div>
+            <div class="insight-item">
+              <strong>候选任务评分</strong>
+              ${list(candidateReasons)}
+            </div>
+          </div>
+        `;
+      }
+
+      function renderTimeline(data) {
+        const material = data.material_understanding;
+        const attribution = data.task_attribution;
+        const policy = data.policy_result;
+        const workbench = data.workbench || {};
+        const attachmentText = data.event.attachments.length
+          ? `；附件：${data.event.attachments.map((item) => `${fileTypeLabel(item.file_type)} ${item.file_ref}`).join("、")}`
+          : "";
+        const quoteText = workbench.quote_display_text
+          ? `；引用显示关联：${shortText(workbench.quote_display_text)}`
+          : "";
+        const steps = [
+          { title: "接收 Message Event（消息事件）", text: `输入类型：${data.event.message_type}${attachmentText}${quoteText}；模型理解对象是当前最终发送消息：${data.event.content_text || "[附件消息]"}。` },
+          { title: "材料理解 Agent（Material Understanding Agent，材料理解智能体）", text: `当前意图：${intentLabel(workbench.intent)}；识别 ${material.documents.length} 份材料，生成 ${material.evidence_list.length} 条 Evidence（证据）。` },
+          { title: "任务工作台 Task Workspace（任务工作台）", text: `根据 Evidence（证据）计算槽位变更：${(workbench.changes || []).map((item) => item.description).join("；") || "无变更"}。` },
+          { title: "任务归属 Agent（Task Attribution Agent，任务归属智能体）", text: `归属结果：${workbench.attribution_label || decisionLabel(attribution.decision)}；目标任务：${displayTaskIds(workbench.selected_task_ids || attribution.selected_task_ids || (workbench.selected_task_id ? [workbench.selected_task_id] : []))}；理由：${attribution.business_reason}` },
+          { title: "Policy Check（策略审查）", text: `策略结果：${policy.result}；说明：${policy.reason}` },
+        ];
+        logicTimeline.innerHTML = steps.map((step, index) => `
+          <div class="step">
+            <div class="step-number">${index + 1}</div>
+            <div><div class="step-title">${escapeHtml(step.title)}</div><div class="step-text">${escapeHtml(step.text)}</div></div>
+          </div>
+        `).join("");
+      }
+
+      function renderEvidence(evidence) {
+        if (!evidence || !evidence.length) {
+          evidenceTable.innerHTML = `<div class="empty">未生成 Evidence（证据）。</div>`;
+          return;
+        }
+        evidenceTable.innerHTML = `
+          <table>
+            <thead>
+              <tr>
+                <th>实体 Entity（实体）</th>
+                <th>字段 Field（字段）</th>
+                <th>标准化值 Normalized Value</th>
+                <th>置信度 Confidence（置信度）</th>
+                <th>校验 Validation（校验）</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${evidence.map((item) => `
+                <tr>
+                  <td>${escapeHtml(item.entity_type)}</td>
+                  <td>${escapeHtml(item.field_label)}<br><span class="subtle">${escapeHtml(item.field_name)}</span></td>
+                  <td>${escapeHtml(item.normalized_value)}</td>
+                  <td>${Math.round(item.confidence * 100)}%</td>
+                  <td>${escapeHtml(item.validation.status)}<br><span class="subtle">${escapeHtml((item.validation.rules || []).join("、") || "无规则")}</span></td>
+                </tr>
+              `).join("")}
+            </tbody>
+          </table>
+        `;
+      }
+
+      function renderCapabilities(data) {
+        const evidenceFields = new Set(data.material_understanding.evidence_list.map((item) => item.field_name));
+        const workbench = data.workbench || {};
+        const caps = [];
+        const selectedIds = workbench.selected_task_ids || (workbench.selected_task_id ? [workbench.selected_task_id] : []);
+        if (data.event.attachments.length) caps.push("支持微信式附件追加，并将图片/文件转为 Attachment（附件）输入。");
+        if (workbench.quote_display_text) caps.push("支持从已发送消息中引用；引用只做显示关联，不替代当前发送消息。");
+        if (selectedIds.length) caps.push(`维护本地任务列表，并把本次消息归属到 ${displayTaskIds(selectedIds)}。`);
+        if (data.task_attribution.decision === "create_multiple_tasks") caps.push("多 VIN（车架号）输入已拆分为多个独立单任务，没有父子任务结构。");
+        if (data.task_attribution.decision === "attach_to_task_set") caps.push("省略式批量修改已根据最近批量任务集合完成归属。");
+        if (evidenceFields.has("frameNo")) caps.push("识别车架号 VIN（车辆识别代码）并完成格式校验。");
+        if (evidenceFields.has("thirdPartyLiabilityInsuranceForMotorVehicles")) caps.push("识别三者险保额修改诉求。");
+        if (evidenceFields.has("unAutoProductInfo")) caps.push("识别随车非车产品删除/替换诉求。");
+        if (selectedIds.length || data.task_attribution.selected_task_id) caps.push("基于候选任务、会话记忆和实体关系完成任务归属。");
+        if (data.task_attribution.entity_graph_summary.used_relationships.length) {
+          caps.push(`构建关系：${data.task_attribution.entity_graph_summary.used_relationships.join("、")}。`);
+        }
+        capabilities.innerHTML = list(caps);
+      }
+
+      function renderBoundaries(data) {
+        const materialRuntime = data.material_understanding.model_runtime || {};
+        const attributionRuntime = data.task_attribution.model_runtime || {};
+        const boundariesText = [
+          "页面当前仅模拟多模态输入：附件只传文件名、类型和材料引用，不读取或上传图片/PDF（便携式文档格式）内容；未知附件不能当作闲聊忽略。",
+          "材料理解 Agent（智能体）不创建任务、不合并任务、不覆盖任务事实。",
+          "任务归属 Agent（智能体）不做 OCR（光学字符识别）或材料抽取。",
+          "VIN（车架号）是不可变车辆唯一标识：已有任务的 VIN 不会被新 VIN 覆盖。",
+          "等待确认或转人工的归属结果只做候选展示，不会写入任务事实。",
+          "高风险或低置信场景由 Policy Engine（策略引擎）要求确认或转人工。",
+        ];
+        if (materialRuntime.fallback_used || attributionRuntime.fallback_used) {
+          boundariesText.unshift("真实大模型当前不可用或调用失败，本次只算离线结构/流程验证，不算模型能力验证。");
+        } else {
+          boundariesText.unshift("真实大模型已参与材料理解和任务归属推理，本次可作为模型能力验证。");
+        }
+        if (data.policy_result.result !== "approved") {
+          boundariesText.unshift(`本次策略未自动批准：${data.policy_result.reason}`);
+        }
+        boundaries.innerHTML = list(boundariesText);
+      }
+
+      function render(data) {
+        renderCurrentMessage(data);
+        renderTaskBoard(data);
+        renderMaterialUnderstanding(data);
+        renderAttributionReasoning(data);
+        renderTimeline(data);
+        renderEvidence(data.material_understanding.evidence_list);
+        renderCapabilities(data);
+        renderBoundaries(data);
+        rawJson.textContent = JSON.stringify(data, null, 2);
+      }
+
+      function buildEventPayload(text, attachmentsForSend, quoteForSend) {
+        return {
+          event_id: `evt_ui_${Date.now()}_${Math.random().toString(16).slice(2, 8)}`,
+          channel: "wechat_work",
+          sender_id: "partner_demo",
+          conversation_id: "conv_demo",
+          message_type: inferMessageType(text, attachmentsForSend, quoteForSend),
+          content_text: text,
+          attachments: attachmentsForSend,
+          quoted_context: quoteForSend
+            ? {
+                quoted_message_id: quoteForSend.id,
+                quoted_text: quoteForSend.text || "",
+                quoted_type: quoteForSend.type === "bot" ? "bot_message" : "user_message",
+              }
+            : null,
+          conversation_excerpt: chatMessages
+            .slice(-8)
+            .map((item) => `${item.type === "bot" ? "机器人" : "用户"}：${item.text || "[附件消息]"}`),
+          timestamp: nowIso(),
+        };
+      }
+
+      function buildCandidateTasks() {
+        return activeTasks().map((task) => ({
+          task_id: task.task_id,
+          score: 0,
+          match_reason: "local_task_workspace",
+          stage: task.stage,
+          status: task.status,
+          last_active_at: task.last_active_at,
+          task,
+        }));
+      }
+
+      function syntheticChatAttribution(event, material) {
+        return {
+          request_id: `attr_req_ui_${Date.now()}`,
+          agent_name: "task_attribution_agent",
+          decision: "ignore_or_chat",
+          selected_task_id: null,
+          new_task_hint: null,
+          confidence: 0.82,
+          risk_level: "low",
+          required_confirmation: false,
+          business_reason: "当前消息没有提取到车辆、人、报价方案或明确作业指令，判断为闲聊或无需归属任务的消息。",
+          entity_graph_summary: { detected_entities: [], used_relationships: [], conflicts: [] },
+          target_task_candidates: [],
+          confirmation_question: null,
+          state_update_suggestion: { next_stage: null, next_action: "ignore", fact_write_allowed: false },
+          fallback_action: "ignore",
+          used_evidence_ids: material.evidence_list.map((item) => item.evidence_id),
+          decision_log_summary: "闲聊或无需归属任务。",
+        };
+      }
+
+      async function send() {
+        const text = input.value.trim();
+        const attachmentsForSend = selectedAttachments.map((item) => ({ ...item }));
+        const quoteForSend = quotedMessage;
+        if (!text && !attachmentsForSend.length) return;
+        sendButton.disabled = true;
+        sendButton.textContent = "验证中...";
+        const userMessage = addBubble("user", text, {
+          attachments: attachmentsForSend,
+          quoteText: quoteForSend?.text || "",
+        });
+        try {
+          const eventPayload = buildEventPayload(text, attachmentsForSend, quoteForSend);
+          const materialResponse = await fetch(apiUrl("/agents/material-understanding/run"), {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(eventPayload),
+          });
+          if (!materialResponse.ok) throw new Error(`材料理解接口返回 ${materialResponse.status}`);
+          const material = await materialResponse.json();
+          const attributionRequest = {
+            event: eventPayload,
+            new_evidence: material.evidence_list,
+            active_tasks: activeTasks(),
+            candidate_tasks: buildCandidateTasks(),
+            conversation_memory: {
+              recent_messages_summary: chatMessages
+                .slice(-8)
+                .map((item) => `${item.type === "bot" ? "机器人" : "用户"}：${item.text || "[附件消息]"}`),
+              last_user_intent: lastRunData?.workbench?.intent || null,
+              last_bot_question: null,
+              recent_referenced_events: quoteForSend ? [quoteForSend.id] : [],
+              focused_task_id: focusedTaskId,
+              recent_task_set_ids: recentTaskSetIds,
+              recent_task_set_reason: recentTaskSetIds.length ? "最近一次多 VIN（车架号）批量拆分出的独立任务集合" : null,
+              last_quote_plan_context: lastQuotePlanContext,
+              quoted_task_id: quoteForSend?.workbench?.selected_task_id || quoteForSend?.task_id || null,
+            },
+            policy_snapshot: {},
+          };
+          const attributionResponse = await fetch(apiUrl("/agents/task-attribution/run"), {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(attributionRequest),
+          });
+          if (!attributionResponse.ok) throw new Error(`任务归属接口返回 ${attributionResponse.status}`);
+          const attribution = await attributionResponse.json();
+          const policyResult = derivePolicyResult(attribution);
+          const workbench = applyAttributionToWorkbench(eventPayload, material, attribution);
+          userMessage.workbench = workbench;
+          userMessage.task_id = workbench.selected_task_id;
+          userMessage.task_ids = workbench.selected_task_ids || [];
+          const data = {
+            event: eventPayload,
+            material_understanding: material,
+            task_attribution: attribution,
+            policy_result: policyResult,
+            workbench,
+            task_list: clone(taskList),
+            runtime: runtimeState,
+          };
+          lastRunData = data;
+          render(data);
+          addBubble("bot", `已完成双 Agent 验证：${workbench.attribution_label}；当前意图：${intentLabel(workbench.intent)}`);
+          input.value = "";
+          selectedAttachments = [];
+          clearQuote();
+          renderAttachmentTray();
+        } catch (error) {
+          addBubble("bot", `验证失败：${error.message}。请确认 FastAPI（接口服务）已启动，并优先使用 http://127.0.0.1:8000/ 打开验证台。`);
+        } finally {
+          sendButton.disabled = false;
+          sendButton.textContent = "发送";
+        }
+      }
+
+      attachButton.addEventListener("click", () => filePicker.click());
+      filePicker.addEventListener("change", () => {
+        Array.from(filePicker.files || []).forEach((file, index) => {
+          selectedAttachments.push({
+            attachment_id: `att_ui_${Date.now()}_${index}`,
+            file_type: inferFileType(file),
+            file_ref: file.name,
+          });
+        });
+        filePicker.value = "";
+        renderAttachmentTray();
+      });
+      clearQuoteButton.addEventListener("click", clearQuote);
+      document.querySelectorAll(".chip").forEach((button) => {
+        button.addEventListener("click", () => {
+          input.value = button.dataset.sample;
+          input.focus();
+        });
+      });
+      sendButton.addEventListener("click", send);
+      input.addEventListener("keydown", (event) => {
+        if (event.key === "Enter" && !event.shiftKey) {
+          event.preventDefault();
+          send();
+        }
+      });
+
+      async function loadRuntime() {
+        try {
+          const response = await fetch(apiUrl("/runtime"));
+          const runtime = await response.json();
+          runtimeState = runtime;
+          runtimePill.textContent = runtime.enabled
+            ? `真实模型已启用｜${runtime.provider} / ${runtime.model} / ${runtime.endpoint}`
+            : `真实模型不可用｜${runtime.active_provider || "未配置"}｜${runtime.reason}`;
+        } catch {
+          runtimeState = null;
+          runtimePill.textContent = `运行时状态未知｜接口：${API_BASE}`;
+        }
+      }
+
+      function renderInitialState() {
+        currentMessageSummary.innerHTML = `<div class="empty">等待发送第一条验证消息。每条消息都会展示：当前意图、槽位变化、任务归属和逻辑依据。</div>`;
+        taskBoard.innerHTML = `<div class="empty">任务列表为空。发送第一条可识别的车险业务消息后，将生成 Task_000001 这类不重复任务编号。</div>`;
+        materialSummary.innerHTML = `<div class="empty">等待材料理解 Agent（材料理解智能体）处理消息。</div>`;
+        attributionSummary.innerHTML = `<div class="empty">等待任务归属 Agent（任务归属智能体）判断消息是否归属任务。</div>`;
+        logicTimeline.innerHTML = `<div class="empty">等待模型处理过程。</div>`;
+        evidenceTable.innerHTML = `<div class="empty">暂无 Evidence（证据）。</div>`;
+        capabilities.innerHTML = `<div class="empty">发送消息后展示本次验证到的能力。</div>`;
+        boundaries.innerHTML = list([
+          "初始化时任务列表为空，不预置后端 demo 任务。",
+          "任务编号由页面生成，格式为 Task_000001、Task_000002。",
+          "引用只做消息显示关联，不替代当前最终发送消息。",
+        ]);
+      }
+
+      addBubble("bot", "你好，我是车险出单双 Agent 验证台。可以直接输入消息，也可以追加图片/文件附件；要引用历史消息，点气泡旁边的“引用”。");
+      renderInitialState();
+      loadRuntime();
+    </script>
+  </body>
+</html>
