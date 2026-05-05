@@ -8,6 +8,7 @@ from unittest.mock import patch
 from app.agents.material_understanding import MaterialUnderstandingAgent
 from app.agents.openai_runtime import ModelRuntime
 from app.agents.task_attribution import TaskAttributionAgent
+from app import main as main_module
 from app.main import app
 from app.schemas import (
     CandidateTask,
@@ -21,6 +22,7 @@ from app.schemas import (
     TaskStage,
 )
 from app.services.policy import PolicyEngine
+from app.services.attachment_storage import AttachmentStorage
 from app.services.storage import JsonStore
 from fastapi.testclient import TestClient
 from scripts.seed_demo_data import seed
@@ -293,10 +295,12 @@ model:
 class AttachmentUploadApiTest(unittest.TestCase):
     def test_upload_returns_attachment_ref_with_storage_metadata(self) -> None:
         client = TestClient(app)
-        response = client.post(
-            "/attachments/upload",
-            files={"file": ("行驶证.jpg", b"fake-image-bytes", "image/jpeg")},
-        )
+        with TemporaryDirectory() as tmp_dir:
+            with patch.object(main_module, "attachment_storage", AttachmentStorage(tmp_dir)):
+                response = client.post(
+                    "/attachments/upload",
+                    files={"file": ("行驶证.jpg", b"fake-image-bytes", "image/jpeg")},
+                )
         self.assertEqual(response.status_code, 200)
         attachment = response.json()["attachment"]
         self.assertEqual(attachment["file_type"], "image")
