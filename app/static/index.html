@@ -453,7 +453,7 @@
             <textarea id="messageInput" data-testid="message-input" placeholder="输入微信消息...">车架号 LFMKN5BF2N3276921，三者改成300万，不要288</textarea>
             <button id="sendButton" class="send-button" data-testid="send-button">发送</button>
           </div>
-          <div class="composer-hint">支持图片、PDF（便携式文档格式）、Excel（电子表格）、Word（文字文档）等附件追加；本地验证仅使用文件名和类型模拟材料识别，不读取文件内容。</div>
+          <div class="composer-hint">支持图片、PDF（便携式文档格式）、Excel（电子表格）、Word（文字文档）等附件上传；图片/PDF 会把真实文件内容交给材料理解 Agent（智能体）做多模态解析。</div>
           <div class="sample-row" aria-label="快捷样例">
             <button class="chip" data-sample="车架号 LFMKN5BF2N3276921，三者改成300万，不要288">报价修改</button>
             <button class="chip" data-sample="改成500W吧，非车要548那款">省略式修改</button>
@@ -645,6 +645,8 @@
           voice_transcript: "语音转写",
           document_layout: "版式文档",
           quoted_context: "引用上下文",
+          multimodal_model: "多模态模型",
+          pdf_text: "PDF（便携式文档格式）文本",
         };
         return labels[sourceType] || sourceType || "未知来源";
       }
@@ -1026,6 +1028,22 @@
         return "other";
       }
 
+      function attachmentDisplayName(attachment) {
+        return attachment.original_name || attachment.file_name || attachment.file_ref || "未命名附件";
+      }
+
+      async function uploadAttachmentFile(file) {
+        const form = new FormData();
+        form.append("file", file);
+        const response = await fetch(apiUrl("/attachments/upload"), {
+          method: "POST",
+          body: form,
+        });
+        if (!response.ok) throw new Error(`附件上传接口返回 ${response.status}`);
+        const payload = await response.json();
+        return payload.attachment;
+      }
+
       function inferMessageType(text, attachments, quote) {
         if (attachments.length && text) return "mixed";
         if (attachments.length === 1 && attachments[0].file_type === "image") return "image";
@@ -1065,11 +1083,11 @@
           const pill = document.createElement("div");
           pill.className = "attachment-pill";
           const label = document.createElement("span");
-          label.textContent = `${fileTypeLabel(attachment.file_type)}：${attachment.file_ref}`;
+          label.textContent = `${fileTypeLabel(attachment.file_type)}：${attachmentDisplayName(attachment)}`;
           const remove = document.createElement("button");
           remove.type = "button";
           remove.textContent = "x";
-          remove.setAttribute("aria-label", `移除附件 ${attachment.file_ref}`);
+          remove.setAttribute("aria-label", `移除附件 ${attachmentDisplayName(attachment)}`);
           remove.addEventListener("click", () => {
             selectedAttachments.splice(index, 1);
             renderAttachmentTray();
@@ -1112,7 +1130,7 @@
           message.attachments.forEach((attachment) => {
             const item = document.createElement("span");
             item.className = "bubble-attachment";
-            item.textContent = `${fileTypeLabel(attachment.file_type)}：${attachment.file_ref}`;
+            item.textContent = `${fileTypeLabel(attachment.file_type)}：${attachmentDisplayName(attachment)}`;
             attachmentBox.appendChild(item);
           });
           bubble.appendChild(attachmentBox);
@@ -1152,7 +1170,7 @@
         const workbench = data.workbench || {};
         const taskTarget = displayTaskIds(workbench.selected_task_ids || attribution.selected_task_ids || (workbench.selected_task_id ? [workbench.selected_task_id] : []));
         const attachmentText = event.attachments.length
-          ? event.attachments.map((item) => `${fileTypeLabel(item.file_type)}：${item.file_ref}`).join("；")
+          ? event.attachments.map((item) => `${fileTypeLabel(item.file_type)}：${attachmentDisplayName(item)}`).join("；")
           : "无";
         const quoteText = workbench.quote_display_text || "无";
         const changes = (workbench.changes || []).map((change) => change.description);
@@ -1244,7 +1262,10 @@
       function renderMaterialUnderstanding(data) {
         const material = data.material_understanding;
         const workbench = data.workbench || {};
-        const docs = material.documents.map((doc) => `${doc.document_name}（${doc.document_type}，置信度 ${Math.round(doc.confidence * 100)}%）`);
+        const docs = material.documents.map((doc) => {
+          const slots = (doc.extractable_slots || []).slice(0, 8).join("、") || "暂无";
+          return `${doc.document_name}（${doc.document_type}，置信度 ${Math.round(doc.confidence * 100)}%，意图：${doc.document_intent || "reference"}，可提取槽位：${slots}）`;
+        });
         const evidenceSeen = new Set();
         const evidence = material.evidence_list
           .filter((item) => {
@@ -1343,7 +1364,7 @@
         const policy = data.policy_result;
         const workbench = data.workbench || {};
         const attachmentText = data.event.attachments.length
-          ? `；附件：${data.event.attachments.map((item) => `${fileTypeLabel(item.file_type)} ${item.file_ref}`).join("、")}`
+          ? `；附件：${data.event.attachments.map((item) => `${fileTypeLabel(item.file_type)} ${attachmentDisplayName(item)}`).join("、")}`
           : "";
         const quoteText = workbench.quote_display_text
           ? `；引用显示关联：${shortText(workbench.quote_display_text)}`
@@ -1399,7 +1420,8 @@
         const workbench = data.workbench || {};
         const caps = [];
         const selectedIds = workbench.selected_task_ids || (workbench.selected_task_id ? [workbench.selected_task_id] : []);
-        if (data.event.attachments.length) caps.push("支持微信式附件追加，并将图片/文件转为 Attachment（附件）输入。");
+        if (data.event.attachments.length) caps.push("支持微信式真实附件上传，并将文件内容转为 Attachment（附件）输入。");
+        if (data.event.attachments.some((item) => ["image", "pdf"].includes(item.file_type))) caps.push("图片/PDF（便携式文档格式）附件已进入材料理解 Agent（智能体）的多模态解析链路。");
         if (workbench.quote_display_text) caps.push("支持从已发送消息中引用；引用只做显示关联，不替代当前发送消息。");
         if (selectedIds.length) caps.push(`维护本地任务列表，并把本次消息归属到 ${displayTaskIds(selectedIds)}。`);
         if (data.task_attribution.decision === "create_multiple_tasks") caps.push("多 VIN（车架号）输入已拆分为多个独立单任务，没有父子任务结构。");
@@ -1418,7 +1440,7 @@
         const materialRuntime = data.material_understanding.model_runtime || {};
         const attributionRuntime = data.task_attribution.model_runtime || {};
         const boundariesText = [
-          "页面当前仅模拟多模态输入：附件只传文件名、类型和材料引用，不读取或上传图片/PDF（便携式文档格式）内容；未知附件不能当作闲聊忽略。",
+          "图片/PDF（便携式文档格式）已支持真实上传和多模态解析；Excel（电子表格）、Word（文字文档）当前先作为文件材料保存和分类，不做正文解析。",
           "材料理解 Agent（智能体）不创建任务、不合并任务、不覆盖任务事实。",
           "任务归属 Agent（智能体）不做 OCR（光学字符识别）或材料抽取。",
           "VIN（车架号）是不可变车辆唯一标识：已有任务的 VIN 不会被新 VIN 覆盖。",
@@ -1581,16 +1603,28 @@
       }
 
       attachButton.addEventListener("click", () => filePicker.click());
-      filePicker.addEventListener("change", () => {
-        Array.from(filePicker.files || []).forEach((file, index) => {
-          selectedAttachments.push({
-            attachment_id: `att_ui_${Date.now()}_${index}`,
-            file_type: inferFileType(file),
-            file_ref: file.name,
-          });
-        });
-        filePicker.value = "";
-        renderAttachmentTray();
+      filePicker.addEventListener("change", async () => {
+        const files = Array.from(filePicker.files || []);
+        if (!files.length) return;
+        attachButton.disabled = true;
+        attachButton.textContent = "上传中";
+        try {
+          for (const file of files) {
+            const uploaded = await uploadAttachmentFile(file);
+            selectedAttachments.push({
+              ...uploaded,
+              file_type: uploaded.file_type || inferFileType(file),
+              original_name: uploaded.original_name || file.name,
+            });
+          }
+          renderAttachmentTray();
+        } catch (error) {
+          addBubble("bot", `附件上传失败：${error.message}。请确认 FastAPI（接口服务）已启动，并已安装 python-multipart。`);
+        } finally {
+          filePicker.value = "";
+          attachButton.disabled = false;
+          attachButton.textContent = "附件";
+        }
       });
       clearQuoteButton.addEventListener("click", clearQuote);
       document.querySelectorAll(".chip").forEach((button) => {

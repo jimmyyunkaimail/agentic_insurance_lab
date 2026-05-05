@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from fastapi import FastAPI
+from fastapi import File, FastAPI, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
@@ -19,6 +19,7 @@ from app.schemas import (
     TaskAttributionRequest,
 )
 from app.services.policy import PolicyEngine
+from app.services.attachment_storage import AttachmentStorage
 from app.services.storage import JsonStore
 
 app = FastAPI(title="车险出单双 Agent 本地验证框架", version="0.1.0")
@@ -34,6 +35,7 @@ store = JsonStore()
 material_agent = MaterialUnderstandingAgent()
 task_agent = TaskAttributionAgent()
 policy_engine = PolicyEngine()
+attachment_storage = AttachmentStorage()
 
 
 @app.get("/", include_in_schema=False)
@@ -49,6 +51,20 @@ def health() -> dict[str, str]:
 @app.get("/runtime")
 def runtime() -> dict:
     return runtime_status().__dict__
+
+
+@app.post("/attachments/upload")
+async def upload_attachment(file: UploadFile = File(...)) -> dict:
+    attachment = await attachment_storage.save_upload(file)
+    return {"attachment": attachment}
+
+
+@app.get("/attachments/{attachment_id}/download")
+def download_attachment(attachment_id: str) -> FileResponse:
+    path = attachment_storage.resolve_by_id(attachment_id)
+    if not path:
+        raise HTTPException(status_code=404, detail="附件不存在。")
+    return FileResponse(path)
 
 
 @app.post("/agents/material-understanding/run", response_model=MaterialUnderstandingResult)

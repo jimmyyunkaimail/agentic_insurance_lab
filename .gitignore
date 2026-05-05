@@ -12,3 +12,4 @@ htmlcov/
 data/*.db
 data/*.log
 data/*.pid
+storage/

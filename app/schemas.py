@@ -49,6 +49,12 @@ class AttachmentRef(BaseModel):
     attachment_id: str = Field(default_factory=lambda: new_id("att"))
     file_type: Literal["image", "pdf", "excel", "word", "other"] = "other"
     file_ref: str
+    original_name: str | None = None
+    mime_type: str | None = None
+    file_size: int | None = None
+    sha256: str | None = None
+    storage_path: str | None = None
+    download_url: str | None = None
     page_hint: int | None = None
 
 
@@ -120,6 +126,14 @@ class DocumentResult(BaseModel):
     standard_level: Literal["standard", "non_standard", "textual", "unknown"] = "textual"
     quality: DocumentQuality = Field(default_factory=DocumentQuality)
     usable_for: list[str] = Field(default_factory=list)
+    document_intent: str = "reference"
+    extractable_slots: list[str] = Field(default_factory=list)
+    context_relation: Literal[
+        "current_message_material",
+        "quoted_context_link",
+        "conversation_focus_material",
+        "unknown",
+    ] = "current_message_material"
     confidence: float = Field(default=0.8, ge=0, le=1)
     source_refs: list[SourceRef] = Field(default_factory=list)
 
@@ -150,7 +164,13 @@ class EvidenceItem(BaseModel):
         "string"
     )
     source_type: Literal[
-        "ocr", "text", "voice_transcript", "document_layout", "quoted_context"
+        "ocr",
+        "text",
+        "voice_transcript",
+        "document_layout",
+        "quoted_context",
+        "multimodal_model",
+        "pdf_text",
     ] = "text"
     source_document_id: str | None = None
     source_event_id: str | None = None

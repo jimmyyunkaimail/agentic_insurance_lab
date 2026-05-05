@@ -135,6 +135,7 @@ class ModelRuntime:
         *,
         system_prompt: str,
         user_payload: dict[str, Any],
+        multimodal_content: list[dict[str, Any]] | None = None,
         output_schema: dict[str, Any] | None = None,
         temperature: float = 0.1,
     ) -> ModelCallResult:
@@ -172,6 +173,7 @@ class ModelRuntime:
                         api_key=api_key,
                         system_prompt=system_prompt,
                         user_payload=user_payload,
+                        multimodal_content=multimodal_content,
                         output_schema=output_schema,
                         temperature=temperature,
                     )
@@ -182,6 +184,7 @@ class ModelRuntime:
                         api_key=api_key,
                         system_prompt=system_prompt,
                         user_payload=user_payload,
+                        multimodal_content=multimodal_content,
                         output_schema=output_schema,
                         temperature=temperature,
                     )
@@ -219,13 +222,25 @@ class ModelRuntime:
         api_key: str,
         system_prompt: str,
         user_payload: dict[str, Any],
+        multimodal_content: list[dict[str, Any]] | None,
         output_schema: dict[str, Any] | None,
         temperature: float,
     ) -> str:
+        input_payload: str | list[dict[str, Any]] = json.dumps(user_payload, ensure_ascii=False)
+        if multimodal_content:
+            input_payload = [
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "input_text", "text": json.dumps(user_payload, ensure_ascii=False)},
+                        *multimodal_content,
+                    ],
+                }
+            ]
         body: dict[str, Any] = {
             "model": provider.model,
             "instructions": system_prompt,
-            "input": json.dumps(user_payload, ensure_ascii=False),
+            "input": input_payload,
             "temperature": temperature,
         }
         if output_schema:
@@ -254,14 +269,36 @@ class ModelRuntime:
         api_key: str,
         system_prompt: str,
         user_payload: dict[str, Any],
+        multimodal_content: list[dict[str, Any]] | None,
         output_schema: dict[str, Any] | None,
         temperature: float,
     ) -> str:
+        user_content: str | list[dict[str, Any]] = json.dumps(user_payload, ensure_ascii=False)
+        if multimodal_content:
+            chat_blocks: list[dict[str, Any]] = [
+                {"type": "text", "text": json.dumps(user_payload, ensure_ascii=False)}
+            ]
+            for block in multimodal_content:
+                if block.get("type") == "input_image":
+                    chat_blocks.append(
+                        {
+                            "type": "image_url",
+                            "image_url": {"url": block.get("image_url", "")},
+                        }
+                    )
+                elif block.get("type") == "input_file":
+                    chat_blocks.append(
+                        {
+                            "type": "text",
+                            "text": f"PDF 附件已上传：{block.get('filename', 'attachment.pdf')}。当前 Chat Completions API（聊天补全接口）供应商不保证支持 PDF 原文输入，请优先切换 Responses API（响应接口）供应商做 PDF 多模态解析。",
+                        }
+                    )
+            user_content = chat_blocks
         body: dict[str, Any] = {
             "model": provider.model,
             "messages": [
                 {"role": "system", "content": system_prompt},
-                {"role": "user", "content": json.dumps(user_payload, ensure_ascii=False)},
+                {"role": "user", "content": user_content},
             ],
             "temperature": temperature,
             "response_format": {"type": "json_object"},
@@ -321,7 +358,16 @@ MATERIAL_AGENT_INSTRUCTIONS = """
 你是车险材料理解 Agent（智能体）。只负责当前最终发送消息的材料分类、槽位抽取、
 字段标准化、风险标记和 Evidence（证据）生成。引用消息只作为 quoted_link（引用关联），
 禁止把引用文本当作当前消息槽位来源。禁止创建任务、合并任务、覆盖任务事实或调用报价、
-投保、支付接口。输出必须是 JSON（结构化数据）。
+投保、支付接口。
+
+如果输入包含图片或 PDF（便携式文档格式）附件，你需要直接理解附件视觉/文本内容：
+1. documents 逐附件输出 attachment_id、document_type、document_name、document_category、
+   document_intent、extractable_slots、confidence、clarity、quality_score。
+2. evidence_list 只输出从当前消息文本或当前附件中明确可见的槽位，不要根据常识补全。
+3. 对行驶证、身份证、营业执照、报价单、保单、购车发票等材料，说明材料类型代表的业务
+   意图，例如提供车辆强证据、提供人员身份、提供历史报价参考、发送保单/发票等。
+4. quoted_context 只能作为关联显示，不能作为槽位来源。
+输出必须是 JSON（结构化数据）。
 """
 
 

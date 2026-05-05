@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import base64
+import mimetypes
 import re
 from pathlib import Path
 from typing import Any
@@ -28,6 +30,7 @@ from app.schemas import (
     VehicleMention,
     new_id,
 )
+from app.services.attachment_storage import AttachmentStorage
 
 VIN_RE = re.compile(r"\b[A-HJ-NPR-Z0-9]{17}\b", re.IGNORECASE)
 PHONE_RE = re.compile(r"\b1[3-9]\d{9}\b")
@@ -123,19 +126,30 @@ class MaterialUnderstandingAgent:
 
     agent_name = "material_understanding_agent"
 
-    def __init__(self, use_model: bool | None = None, runtime: ModelRuntime | None = None):
+    def __init__(
+        self,
+        use_model: bool | None = None,
+        runtime: ModelRuntime | None = None,
+        attachment_storage: AttachmentStorage | None = None,
+    ):
         self.use_model = use_model
         self.runtime = runtime or ModelRuntime()
+        self.attachment_storage = attachment_storage or AttachmentStorage()
 
     def run(self, request: MaterialUnderstandingRequest | MessageEvent) -> MaterialUnderstandingResult:
         event = request if isinstance(request, MessageEvent) else request.to_event()
         model_payload, model_runtime = self._try_model_understanding(event)
-        documents = self._classify_documents(event)
+        documents = self._merge_model_documents(event, model_payload)
         textual_document = self._textual_document(event) if self._has_text_material(event) else None
         if textual_document:
             documents.append(textual_document)
 
-        evidence = self._extract_text_evidence(event, documents)
+        evidence = self._dedupe_evidence(
+            [
+                *self._model_evidence(event, documents, model_payload),
+                *self._extract_text_evidence(event, documents),
+            ]
+        )
         risks = self._build_risks(event, documents, evidence)
         conflicts = []
         next_route = "manual_review" if any(r.risk_level == RiskLevel.high for r in risks) else "task_attribution"
@@ -150,10 +164,16 @@ class MaterialUnderstandingAgent:
                 "message_type": event.message_type.value,
                 "has_text": bool(event.content_text.strip()),
                 "attachment_count": len(event.attachments),
+                "uploaded_attachment_count": len(
+                    [item for item in event.attachments if item.storage_path or item.download_url]
+                ),
+                "multimodal_attachment_count": len(
+                    [item for item in event.attachments if item.file_type in {"image", "pdf"}]
+                ),
                 "quoted_message_present": event.quoted_context is not None,
                 "quoted_context_policy": "display_link_only_not_slot_source",
             },
-            current_intent=current_intent or self._infer_current_intent(event.content_text, evidence),
+            current_intent=current_intent or self._infer_current_intent(event.content_text, evidence, documents),
             speech_act=speech_act or self._infer_speech_act(event.content_text, evidence),
             vehicle_mentions=self._vehicle_mentions(event.content_text, evidence, model_payload),
             quote_plan_mentions=self._quote_plan_mentions(event.content_text, evidence, model_payload),
@@ -193,7 +213,13 @@ class MaterialUnderstandingAgent:
                 "rule": "只理解 content_text；quoted_context 只做 quoted_link，不参与槽位抽取。",
                 "content_text": event.content_text,
                 "message_type": event.message_type.value,
-                "attachments": [item.model_dump(mode="json") for item in event.attachments],
+                "attachments": [
+                    {
+                        **item.model_dump(mode="json"),
+                        "binary_available": self.attachment_storage.resolve(item) is not None,
+                    }
+                    for item in event.attachments
+                ],
                 "quoted_context": event.quoted_context.model_dump(mode="json") if event.quoted_context else None,
                 "expected_json_keys": [
                     "current_intent",
@@ -201,8 +227,11 @@ class MaterialUnderstandingAgent:
                     "vehicle_mentions",
                     "quote_plan_mentions",
                     "party_mentions",
+                    "documents",
+                    "evidence_list",
                 ],
             },
+            multimodal_content=self._multimodal_content(event),
             output_schema={
                 "type": "object",
                 "properties": {
@@ -211,11 +240,38 @@ class MaterialUnderstandingAgent:
                     "vehicle_mentions": {"type": "array", "items": {"type": "object"}},
                     "quote_plan_mentions": {"type": "array", "items": {"type": "object"}},
                     "party_mentions": {"type": "array", "items": {"type": "object"}},
+                    "documents": {"type": "array", "items": {"type": "object"}},
+                    "evidence_list": {"type": "array", "items": {"type": "object"}},
                 },
             },
         )
         runtime = self._runtime_dict(call.status, fallback_used=not call.ok, error=call.error)
         return call.content if call.ok else None, runtime
+
+    def _multimodal_content(self, event: MessageEvent) -> list[dict[str, Any]]:
+        content: list[dict[str, Any]] = []
+        for attachment in event.attachments:
+            if attachment.file_type not in {"image", "pdf"}:
+                continue
+            path = self.attachment_storage.resolve(attachment)
+            if not path:
+                continue
+            mime_type = attachment.mime_type or mimetypes.guess_type(path.name)[0]
+            if not mime_type:
+                mime_type = "application/pdf" if attachment.file_type == "pdf" else "image/jpeg"
+            encoded = base64.b64encode(path.read_bytes()).decode("ascii")
+            data_url = f"data:{mime_type};base64,{encoded}"
+            if attachment.file_type == "image":
+                content.append({"type": "input_image", "image_url": data_url})
+            elif attachment.file_type == "pdf":
+                content.append(
+                    {
+                        "type": "input_file",
+                        "filename": attachment.original_name or attachment.file_ref,
+                        "file_data": data_url,
+                    }
+                )
+        return content
 
     def _runtime_dict(self, status: Any, fallback_used: bool, error: str | None = None) -> dict[str, Any]:
         payload = status.__dict__.copy()
@@ -242,6 +298,8 @@ class MaterialUnderstandingAgent:
                         document_name="未知材料",
                         document_category="unknown",
                         standard_level="unknown",
+                        document_intent="needs_clarification",
+                        context_relation="current_message_material",
                         confidence=0.2,
                         quality=DocumentQuality(clarity="medium", quality_score=0.5),
                         source_refs=[SourceRef(event_id=event.event_id, attachment_id=attachment.attachment_id)],
@@ -262,8 +320,78 @@ class MaterialUnderstandingAgent:
                     ),
                     quality=self._quality_from_attachment(attachment),
                     usable_for=self._usable_for(doc_type),
+                    document_intent=self._document_intent(doc_type),
+                    extractable_slots=DOCUMENT_FIELD_MATRIX.get(doc_type, []),
+                    context_relation="current_message_material",
                     confidence=confidence,
                     source_refs=[SourceRef(event_id=event.event_id, attachment_id=attachment.attachment_id)],
+                )
+            )
+        return documents
+
+    def _merge_model_documents(
+        self, event: MessageEvent, model_payload: dict[str, Any] | None
+    ) -> list[DocumentResult]:
+        local_documents = self._classify_documents(event)
+        model_documents = self._model_documents(event, model_payload)
+        if not model_documents:
+            return local_documents
+
+        covered_attachment_ids = {
+            ref.attachment_id
+            for document in model_documents
+            for ref in document.source_refs
+            if ref.attachment_id
+        }
+        merged = [*model_documents]
+        for document in local_documents:
+            attachment_ids = {ref.attachment_id for ref in document.source_refs if ref.attachment_id}
+            if attachment_ids and attachment_ids <= covered_attachment_ids:
+                continue
+            merged.append(document)
+        return merged
+
+    def _model_documents(
+        self, event: MessageEvent, model_payload: dict[str, Any] | None
+    ) -> list[DocumentResult]:
+        documents: list[DocumentResult] = []
+        attachment_ids = {item.attachment_id for item in event.attachments}
+        for raw in (model_payload or {}).get("documents", []) or []:
+            if not isinstance(raw, dict):
+                continue
+            attachment_id = raw.get("attachment_id")
+            if attachment_id and attachment_id not in attachment_ids:
+                continue
+            doc_type = str(raw.get("document_type") or "unknown")
+            meta = DOCUMENT_TYPES.get(doc_type)
+            category = raw.get("document_category") or (meta or {}).get("category") or "unknown"
+            if category not in {"standard_certificate", "non_standard", "textual", "unknown"}:
+                category = "unknown"
+            slots = raw.get("extractable_slots") or DOCUMENT_FIELD_MATRIX.get(doc_type, [])
+            if not isinstance(slots, list):
+                slots = []
+            confidence = self._safe_confidence(raw.get("confidence"), 0.78)
+            raw_quality = raw.get("quality") if isinstance(raw.get("quality"), dict) else {}
+            clarity = raw.get("clarity") or raw_quality.get("clarity")
+            if clarity not in {"clear", "medium", "blurred", "blocked", "incomplete"}:
+                clarity = "clear"
+            documents.append(
+                DocumentResult(
+                    document_id=str(raw.get("document_id") or new_id("doc")),
+                    document_type=doc_type,
+                    document_name=str(raw.get("document_name") or (meta or {}).get("name") or "未知材料"),
+                    document_category=category,  # type: ignore[arg-type]
+                    standard_level="standard" if category == "standard_certificate" else category,  # type: ignore[arg-type]
+                    quality=DocumentQuality(
+                        clarity=clarity,  # type: ignore[arg-type]
+                        quality_score=self._safe_confidence(raw.get("quality_score"), confidence),
+                    ),
+                    usable_for=self._usable_for(doc_type),
+                    document_intent=str(raw.get("document_intent") or self._document_intent(doc_type)),
+                    extractable_slots=[str(item) for item in slots],
+                    context_relation="current_message_material",
+                    confidence=confidence,
+                    source_refs=[SourceRef(event_id=event.event_id, attachment_id=attachment_id)],
                 )
             )
         return documents
@@ -291,6 +419,36 @@ class MaterialUnderstandingAgent:
         if doc_type in {"quotation", "other_quotation", "insurance_policy"}:
             return ["quote", "history_reference"]
         return ["reference"]
+
+    def _document_intent(self, doc_type: str) -> str:
+        if doc_type in {
+            "vehicle_license",
+            "electronic_vehicle_license",
+            "vehicle_certification",
+            "entry_bill",
+            "vehicle_register_cert",
+        }:
+            return "provide_vehicle_identity_for_quote_or_insurance"
+        if doc_type in {
+            "identity_card_front",
+            "identity_card_back",
+            "business_license",
+            "driving_license",
+            "electronic_driving_license",
+            "residence_permit",
+        }:
+            return "provide_party_identity_for_insurance"
+        if doc_type in {"quotation", "other_quotation"}:
+            return "provide_quote_plan_reference"
+        if doc_type == "insurance_policy":
+            return "provide_policy_or_history_reference"
+        if doc_type in {"receipt", "electronic_receipt"}:
+            return "provide_new_vehicle_invoice_material"
+        if doc_type in {"letter_of_authorization", "vehicle_delivery_authorization"}:
+            return "prove_authorization_or_party_relationship"
+        if doc_type == "unknown":
+            return "needs_clarification"
+        return "provide_auxiliary_reference"
 
     def _has_text_material(self, event: MessageEvent) -> bool:
         return bool(event.content_text.strip()) or event.message_type in {
@@ -399,6 +557,68 @@ class MaterialUnderstandingAgent:
         evidence.extend(self._extract_business_credentials(text, event, source_document_id, source_type))
         evidence.extend(self._extract_dates(text, event, source_document_id, source_type))
         return evidence
+
+    def _model_evidence(
+        self,
+        event: MessageEvent,
+        documents: list[DocumentResult],
+        model_payload: dict[str, Any] | None,
+    ) -> list[EvidenceItem]:
+        evidence: list[EvidenceItem] = []
+        document_by_attachment: dict[str, str] = {}
+        for document in documents:
+            for ref in document.source_refs:
+                if ref.attachment_id:
+                    document_by_attachment[ref.attachment_id] = document.document_id
+
+        for raw in (model_payload or {}).get("evidence_list", []) or []:
+            if not isinstance(raw, dict):
+                continue
+            normalized_value = str(raw.get("normalized_value") or raw.get("raw_value") or "").strip()
+            if not normalized_value:
+                continue
+            attachment_id = raw.get("attachment_id")
+            source_document_id = raw.get("source_document_id") or document_by_attachment.get(str(attachment_id))
+            try:
+                evidence.append(
+                    EvidenceItem(
+                        entity_type=raw.get("entity_type", "credential"),
+                        role=raw.get("role", "unknown"),
+                        field_name=str(raw.get("field_name") or "extractedField"),
+                        field_label=str(raw.get("field_label") or raw.get("field_name") or "抽取字段"),
+                        raw_value=str(raw.get("raw_value") or normalized_value),
+                        normalized_value=normalized_value,
+                        value_type=raw.get("value_type", "string"),
+                        source_type="multimodal_model" if event.attachments else "text",
+                        source_document_id=source_document_id,
+                        source_event_id=event.event_id,
+                        confidence=self._safe_confidence(raw.get("confidence"), 0.78),
+                        evidence_strength=raw.get("evidence_strength", EvidenceStrength.medium),
+                        validation=FieldValidation(
+                            status=raw.get("validation_status", ValidationStatus.not_checked),
+                            rules=[str(item) for item in raw.get("validation_rules", [])],
+                        ),
+                    )
+                )
+            except Exception:
+                continue
+        return evidence
+
+    def _dedupe_evidence(self, items: list[EvidenceItem]) -> list[EvidenceItem]:
+        deduped: dict[tuple[str, str, str], EvidenceItem] = {}
+        for item in items:
+            key = (item.entity_type, item.field_name, item.normalized_value)
+            current = deduped.get(key)
+            if current is None or item.confidence > current.confidence:
+                deduped[key] = item
+        return list(deduped.values())
+
+    def _safe_confidence(self, value: Any, default: float) -> float:
+        try:
+            number = float(value)
+        except (TypeError, ValueError):
+            return default
+        return max(0.0, min(1.0, number))
 
     def _extract_role_names(
         self, text: str, event: MessageEvent, source_document_id: str | None, source_type: str
@@ -668,7 +888,9 @@ class MaterialUnderstandingAgent:
                 return canonical
         return None
 
-    def _infer_current_intent(self, text: str, evidence: list[EvidenceItem]) -> str:
+    def _infer_current_intent(
+        self, text: str, evidence: list[EvidenceItem], documents: list[DocumentResult] | None = None
+    ) -> str:
         intents = {item.normalized_value for item in evidence if item.entity_type == "intent"}
         if "modify_quote" in intents:
             if self._has_task_set_scope(text):
@@ -711,6 +933,13 @@ class MaterialUnderstandingAgent:
             return "supplement_party_info"
         if any(item.entity_type == "credential" for item in evidence):
             return "business_status_or_reference"
+        document_types = {document.document_type for document in documents or []}
+        if "insurance_policy" in document_types:
+            return "policy_delivered"
+        if document_types & {"quotation", "other_quotation"}:
+            return "quote_result"
+        if document_types:
+            return "supplement_attachment_material"
         if text.strip() == "" and evidence == []:
             return "supplement_attachment_material"
         if text.strip() in {"嗯", "好的", "收到", "谢谢"}:

@@ -70,6 +70,8 @@ export OPENROUTER_API_KEY="你的 openrouter 密钥"
 
 - `GET /health`
 - `GET /runtime`
+- `POST /attachments/upload`
+- `GET /attachments/{attachment_id}/download`
 - `POST /events/ingest`
 - `POST /agents/material-understanding/run`
 - `POST /agents/task-attribution/run`
@@ -92,7 +94,9 @@ python -m unittest discover -s tests
 
 - 材料理解 Agent（智能体）不创建任务、不合并任务、不覆盖任务事实。
 - 任务归属 Agent（智能体）不做 OCR（光学字符识别）或字段抽取。
+- 图片/PDF（便携式文档格式）支持真实附件上传，并可在真实模型可用时进入多模态解析链路；缺少模型密钥时仅保留本地分类和规则抽取 fallback（兜底逻辑）。
+- Excel（电子表格）和 Word（文字文档）当前支持上传存储与材料引用，正文解析仍待接入专门解析器。
 - 高风险归属由 Policy Engine（策略引擎）拦截。
 - 多 VIN（车架号）批量报价会拆为多个独立单任务，不创建父子任务。
 - VIN（车架号）不可更新；新 VIN 只能创建新任务、进入批量拆分或触发确认。
-- 真实多模态模型和 OCR（光学字符识别）可在当前 Schema（结构约束）之上继续增强。
+- 真实 OCR（光学字符识别）可在当前 Schema（结构约束）之上继续增强。

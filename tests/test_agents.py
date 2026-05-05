@@ -8,6 +8,7 @@ from unittest.mock import patch
 from app.agents.material_understanding import MaterialUnderstandingAgent
 from app.agents.openai_runtime import ModelRuntime
 from app.agents.task_attribution import TaskAttributionAgent
+from app.main import app
 from app.schemas import (
     CandidateTask,
     ConversationMemory,
@@ -21,6 +22,7 @@ from app.schemas import (
 )
 from app.services.policy import PolicyEngine
 from app.services.storage import JsonStore
+from fastapi.testclient import TestClient
 from scripts.seed_demo_data import seed
 
 
@@ -51,6 +53,54 @@ class MaterialUnderstandingAgentTest(unittest.TestCase):
             )
         )
         self.assertEqual(result.documents[0].document_type, "vehicle_license")
+        self.assertEqual(result.documents[0].document_intent, "provide_vehicle_identity_for_quote_or_insurance")
+        self.assertIn("frameNo", result.documents[0].extractable_slots)
+
+    def test_uses_multimodal_model_payload_for_uploaded_pdf_slots(self) -> None:
+        agent = MaterialUnderstandingAgent(use_model=False)
+        model_payload = {
+            "current_intent": "policy_delivered",
+            "documents": [
+                {
+                    "attachment_id": "att_policy",
+                    "document_type": "insurance_policy",
+                    "document_name": "电子保单",
+                    "document_category": "non_standard",
+                    "document_intent": "provide_policy_or_history_reference",
+                    "extractable_slots": ["policyNo", "frameNo", "ownerName"],
+                    "confidence": 0.91,
+                }
+            ],
+            "evidence_list": [
+                {
+                    "attachment_id": "att_policy",
+                    "entity_type": "credential",
+                    "field_name": "policyNo",
+                    "field_label": "保单号",
+                    "raw_value": "PDD202605050001",
+                    "normalized_value": "PDD202605050001",
+                    "confidence": 0.89,
+                }
+            ],
+        }
+        with patch.object(agent, "_try_model_understanding", return_value=(model_payload, {"fallback_used": False})):
+            result = agent.run(
+                MaterialUnderstandingRequest(
+                    message_type="file",
+                    attachments=[
+                        {
+                            "attachment_id": "att_policy",
+                            "file_type": "pdf",
+                            "file_ref": "保单.pdf",
+                            "storage_path": "storage/attachments/保单.pdf",
+                        }
+                    ],
+                )
+            )
+        self.assertEqual(result.current_intent, "policy_delivered")
+        self.assertEqual(result.documents[0].document_type, "insurance_policy")
+        self.assertEqual(result.evidence_list[0].field_name, "policyNo")
+        self.assertEqual(result.evidence_list[0].source_type, "multimodal_model")
 
     def test_quote_context_does_not_pollute_current_slots(self) -> None:
         agent = MaterialUnderstandingAgent(use_model=False)
@@ -238,6 +288,21 @@ model:
                 status = ModelRuntime(config_path).status()
         self.assertFalse(status.enabled)
         self.assertIn("APIOPENCC_API_KEY_TEST_ONLY", status.reason)
+
+
+class AttachmentUploadApiTest(unittest.TestCase):
+    def test_upload_returns_attachment_ref_with_storage_metadata(self) -> None:
+        client = TestClient(app)
+        response = client.post(
+            "/attachments/upload",
+            files={"file": ("行驶证.jpg", b"fake-image-bytes", "image/jpeg")},
+        )
+        self.assertEqual(response.status_code, 200)
+        attachment = response.json()["attachment"]
+        self.assertEqual(attachment["file_type"], "image")
+        self.assertEqual(attachment["original_name"], "行驶证.jpg")
+        self.assertTrue(attachment["storage_path"].endswith(".jpg"))
+        self.assertIn("/attachments/", attachment["download_url"])
 
 
 if __name__ == "__main__":
