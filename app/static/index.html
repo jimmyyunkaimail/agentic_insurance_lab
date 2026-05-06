@@ -491,7 +491,7 @@
           </div>
           <div class="composer-hint">支持图片、PDF（便携式文档格式）、Excel（电子表格）、Word（文字文档）等附件上传；图片/PDF 会把真实文件内容交给材料理解 Agent（智能体）做多模态解析。</div>
           <div class="sample-row" aria-label="快捷样例">
-            <button class="chip" data-sample="请帮忙初始报价&#10;车牌沪A8K3D2，车架号 LFMKN5BF2N3276921，发动机号 8AR123456&#10;车主张三，证件号 310101199001011234，手机号 13800138000&#10;投保人张三，被保人张三&#10;三者300万，非车388，今天起保">初始报价</button>
+            <button class="chip" data-sample="沪A8K3D2，LFMKN5BF2N3276921，8AR123456&#10;张三 310101199001011234，13800138000&#10;三者300万，非车388，今天起保">初始报价</button>
             <button class="chip" data-sample="车架号 LFMKN5BF2N3276921，三者改成300万，不要288">报价修改</button>
             <button class="chip" data-sample="改成500W吧，非车要548那款">省略式修改</button>
             <button class="chip" data-sample="LBV41DU01NS563230&#10;LBVKY1105LSX96031&#10;LBVHY5105NM447881&#10;LBV6R4101NM429666&#10;LBVHZ1109HMJ96311">批量 VIN</button>
@@ -712,6 +712,10 @@
         return samplePick(["288", "388", "548", "588", "688"]);
       }
 
+      function randomStartDateText() {
+        return samplePick(["今天起保", "明天生效", "今晚起", "即刻生效", "5月8号起", "下周一生效"]);
+      }
+
       function randomVehicleRef() {
         return samplePick([
           () => `车架号 ${randomVin()}`,
@@ -722,15 +726,40 @@
 
       function initialQuoteSample() {
         const owner = randomPersonName();
-        const applicant = samplePick([owner, randomPersonName()]);
-        const insured = samplePick([owner, applicant, randomPersonName()]);
-        return [
-          "请帮忙初始报价",
-          `车牌${randomLicenseNo()}，车架号 ${randomVin()}，发动机号 ${randomEngineNo()}`,
-          `车主${owner}，证件号 ${randomIdNo()}，手机号 ${randomPhone()}`,
-          `投保人${applicant}，被保人${insured}`,
-          `三者${randomThirdPartyAmount()}，非车${randomNonAutoAmount()}，今天起保`,
-        ].join("\n");
+        const plate = randomLicenseNo();
+        const vin = randomVin();
+        const engineNo = randomEngineNo();
+        const idNo = randomIdNo();
+        const phone = randomPhone();
+        const thirdParty = randomThirdPartyAmount();
+        const nonAuto = randomNonAutoAmount();
+        const startDate = randomStartDateText();
+        return samplePick([
+          [
+            `${plate}，${vin}，${engineNo}`,
+            `${owner} ${idNo}，${phone}`,
+            `三者${thirdParty}，非车${nonAuto}，${startDate}`,
+          ].join("\n"),
+          [
+            `帮这台先算下 ${plate}`,
+            `${vin} / ${engineNo}`,
+            `${owner} ${phone} ${idNo}`,
+            `三者${thirdParty} 非车${nonAuto} ${startDate}`,
+          ].join("\n"),
+          [
+            `${plate}`,
+            `${vin}`,
+            `${engineNo}`,
+            `${owner}，${idNo}，${phone}`,
+            `商业三者${thirdParty}，非车按${nonAuto}，${startDate}`,
+          ].join("\n"),
+          [
+            `这台报价 ${plate} ${vin}`,
+            `${engineNo} ${owner} ${phone}`,
+            `${idNo}`,
+            `三者${thirdParty} + 非车${nonAuto}，${startDate}`,
+          ].join("\n"),
+        ]);
       }
 
       function quoteModifySample() {
