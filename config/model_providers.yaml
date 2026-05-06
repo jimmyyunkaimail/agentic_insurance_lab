@@ -1,13 +1,28 @@
 model:
-  active_provider: openrouter
+  active_provider: openrouter_text
+  routing:
+    enabled: true
+    routes:
+      text: openrouter_text
+      image: openrouter_vision
+      vision: openrouter_vision
+      pdf: apiopencc
   providers:
     apiopencc:
       base_url: "https://apiopencc.com/v1"
       endpoint: "responses"
       api_key_env: "APIOPENCC_API_KEY"
       model: "gpt-4.1-mini"
-    openrouter:
+      input_modalities: ["text", "image", "pdf"]
+    openrouter_text:
       base_url: "https://openrouter.ai/api/v1"
       endpoint: "chat_completions"
       api_key_env: "OPENROUTER_API_KEY"
       model: "minimax/minimax-m2.7"
+      input_modalities: ["text"]
+    openrouter_vision:
+      base_url: "https://openrouter.ai/api/v1"
+      endpoint: "chat_completions"
+      api_key_env: "OPENROUTER_API_KEY"
+      model: "qwen/qwen3-vl-32b-instruct"
+      input_modalities: ["text", "image"]

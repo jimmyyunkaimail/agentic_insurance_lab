@@ -291,6 +291,132 @@ model:
         self.assertFalse(status.enabled)
         self.assertIn("APIOPENCC_API_KEY_TEST_ONLY", status.reason)
 
+    def test_local_secret_file_enables_real_model_when_env_missing(self) -> None:
+        with TemporaryDirectory() as tmp_dir:
+            config_path = Path(tmp_dir) / "model_providers.yaml"
+            secrets_path = Path(tmp_dir) / "model_secrets.local.yaml"
+            config_path.write_text(
+                """
+model:
+  active_provider: apiopencc
+  providers:
+    apiopencc:
+      base_url: "https://apiopencc.com/v1"
+      endpoint: "responses"
+      api_key_env: "APIOPENCC_API_KEY_TEST_ONLY"
+      model: "demo-model"
+""",
+                encoding="utf-8",
+            )
+            secrets_path.write_text(
+                """
+api_keys:
+  APIOPENCC_API_KEY_TEST_ONLY: "local-test-key"
+""",
+                encoding="utf-8",
+            )
+            with patch.dict("os.environ", {}, clear=True):
+                status = ModelRuntime(config_path, secrets_path).status()
+        self.assertTrue(status.enabled)
+        self.assertEqual(status.api_key_source, "本地密钥配置 api_keys.APIOPENCC_API_KEY_TEST_ONLY")
+
+    def test_env_key_takes_priority_over_local_secret_file(self) -> None:
+        with TemporaryDirectory() as tmp_dir:
+            config_path = Path(tmp_dir) / "model_providers.yaml"
+            secrets_path = Path(tmp_dir) / "model_secrets.local.yaml"
+            config_path.write_text(
+                """
+model:
+  active_provider: openrouter_text
+  providers:
+    openrouter_text:
+      base_url: "https://openrouter.ai/api/v1"
+      endpoint: "chat_completions"
+      api_key_env: "OPENROUTER_API_KEY_TEST_ONLY"
+      model: "demo-model"
+""",
+                encoding="utf-8",
+            )
+            secrets_path.write_text(
+                """
+providers:
+  openrouter_text:
+    api_key: "local-test-key"
+""",
+                encoding="utf-8",
+            )
+            with patch.dict("os.environ", {"OPENROUTER_API_KEY_TEST_ONLY": "env-test-key"}, clear=True):
+                runtime = ModelRuntime(config_path, secrets_path)
+                status = runtime.status()
+                key, source, _ = runtime.resolve_api_key(runtime.active_provider()[0])
+        self.assertTrue(status.enabled)
+        self.assertEqual(key, "env-test-key")
+        self.assertEqual(source, "环境变量 OPENROUTER_API_KEY_TEST_ONLY")
+        self.assertEqual(status.api_key_source, "环境变量 OPENROUTER_API_KEY_TEST_ONLY")
+
+    def test_routes_image_input_to_vision_provider(self) -> None:
+        with TemporaryDirectory() as tmp_dir:
+            config_path = Path(tmp_dir) / "model_providers.yaml"
+            config_path.write_text(
+                """
+model:
+  active_provider: openrouter_text
+  routing:
+    enabled: true
+    routes:
+      image: openrouter_vision
+  providers:
+    openrouter_text:
+      base_url: "https://openrouter.ai/api/v1"
+      endpoint: "chat_completions"
+      api_key_env: "OPENROUTER_API_KEY_TEST_ONLY"
+      model: "minimax/minimax-m2.7"
+      input_modalities: ["text"]
+    openrouter_vision:
+      base_url: "https://openrouter.ai/api/v1"
+      endpoint: "chat_completions"
+      api_key_env: "OPENROUTER_API_KEY_TEST_ONLY"
+      model: "qwen/qwen3-vl-32b-instruct"
+      input_modalities: ["text", "image"]
+""",
+                encoding="utf-8",
+            )
+            runtime = ModelRuntime(config_path)
+            provider, _, routed_from, route_reason = runtime.select_provider(
+                [{"type": "input_image", "image_url": "data:image/png;base64,abc"}]
+            )
+        self.assertIsNotNone(provider)
+        self.assertEqual(provider.name, "openrouter_vision")
+        self.assertEqual(routed_from, "openrouter_text")
+        self.assertEqual(route_reason, "routed_by_image+text")
+
+    def test_blocks_multimodal_call_when_provider_does_not_support_image(self) -> None:
+        with TemporaryDirectory() as tmp_dir:
+            config_path = Path(tmp_dir) / "model_providers.yaml"
+            config_path.write_text(
+                """
+model:
+  active_provider: openrouter_text
+  providers:
+    openrouter_text:
+      base_url: "https://openrouter.ai/api/v1"
+      endpoint: "chat_completions"
+      api_key_env: "OPENROUTER_API_KEY_TEST_ONLY"
+      model: "minimax/minimax-m2.7"
+      input_modalities: ["text"]
+""",
+                encoding="utf-8",
+            )
+            with patch.dict("os.environ", {"OPENROUTER_API_KEY_TEST_ONLY": "test-key"}, clear=True):
+                call = ModelRuntime(config_path).structured_call_sync(
+                    system_prompt="Return JSON.",
+                    user_payload={"message": "图片材料"},
+                    multimodal_content=[{"type": "input_image", "image_url": "data:image/png;base64,abc"}],
+                    output_schema={"type": "object"},
+                )
+        self.assertFalse(call.ok)
+        self.assertIn("不支持 image 输入", call.error or "")
+
 
 class AttachmentUploadApiTest(unittest.TestCase):
     def test_upload_returns_attachment_ref_with_storage_metadata(self) -> None:

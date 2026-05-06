@@ -43,28 +43,61 @@ uvicorn app.main:app --reload
 
 ```yaml
 model:
-  active_provider: apiopencc
+  active_provider: openrouter_text
+  routing:
+    enabled: true
+    routes:
+      text: openrouter_text
+      image: openrouter_vision
+      vision: openrouter_vision
+      pdf: apiopencc
   providers:
     apiopencc:
       base_url: "https://apiopencc.com/v1"
       endpoint: "responses"
       api_key_env: "APIOPENCC_API_KEY"
       model: "gpt-4.1-mini"
-    openrouter:
+      input_modalities: ["text", "image", "pdf"]
+    openrouter_text:
       base_url: "https://openrouter.ai/api/v1"
       endpoint: "chat_completions"
       api_key_env: "OPENROUTER_API_KEY"
-      model: "openai/gpt-4.1-mini"
+      model: "minimax/minimax-m2.7"
+      input_modalities: ["text"]
+    openrouter_vision:
+      base_url: "https://openrouter.ai/api/v1"
+      endpoint: "chat_completions"
+      api_key_env: "OPENROUTER_API_KEY"
+      model: "qwen/qwen3-vl-32b-instruct"
+      input_modalities: ["text", "image"]
 ```
 
-密钥只放环境变量：
+密钥读取优先级为：系统环境变量 > 本地密钥配置文件。优先推荐系统环境变量：
 
 ```bash
 export APIOPENCC_API_KEY="你的 apiopencc 密钥"
 export OPENROUTER_API_KEY="你的 openrouter 密钥"
 ```
 
-`active_provider` 选择当前供应商。`apiopencc` 使用 Responses API（响应接口），`openrouter` 使用 Chat Completions API（聊天补全接口）。`GET /runtime` 会展示当前供应商、模型名、endpoint（接口端点）和真实模型是否可用。
+如果桌面应用启动时读不到系统环境变量，可以改用本地私密配置文件 `config/model_secrets.local.yaml`。该文件已被 `.gitignore` 排除，不会提交到 git：
+
+```yaml
+api_keys:
+  APIOPENCC_API_KEY: "你的 apiopencc 密钥"
+  OPENROUTER_API_KEY: "你的 openrouter 密钥"
+```
+
+也可以按供应商单独配置：
+
+```yaml
+providers:
+  openrouter_text:
+    api_key: "你的 openrouter 文本模型密钥"
+  openrouter_vision:
+    api_key: "你的 openrouter 视觉模型密钥"
+```
+
+`active_provider` 是默认文本模型。`routing` 会根据输入动态路由：纯文本走 `openrouter_text`，图片走 `openrouter_vision`，PDF（便携式文档格式）走 `apiopencc`。`apiopencc` 使用 Responses API（响应接口），`openrouter_*` 使用 Chat Completions API（聊天补全接口）。`GET /runtime` 会展示默认供应商、模型名、endpoint（接口端点）、输入能力和真实模型是否可用。
 
 启动后访问：
 

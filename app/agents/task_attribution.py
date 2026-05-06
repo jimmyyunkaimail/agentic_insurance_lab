@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+from contextvars import ContextVar
 from dataclasses import dataclass
 from typing import Any
 
@@ -18,6 +19,10 @@ from app.schemas import (
     TaskAttributionRequest,
     TaskRecord,
 )
+from app.services.tracing import TraceRecorder
+
+
+_CURRENT_TRACE: ContextVar[TraceRecorder | None] = ContextVar("task_attribution_trace", default=None)
 
 
 @dataclass
@@ -41,8 +46,58 @@ class TaskAttributionAgent:
         self._last_model_runtime: dict[str, Any] = {}
 
     def run(self, request: TaskAttributionRequest) -> TaskAttributionDecision:
-        _, model_runtime = self._try_model_reasoning(request)
+        trace = TraceRecorder("task_attribution")
+        token = _CURRENT_TRACE.set(trace)
+        try:
+            return self._run_with_trace(request, trace)
+        finally:
+            _CURRENT_TRACE.reset(token)
+
+    def _run_with_trace(
+        self, request: TaskAttributionRequest, trace: TraceRecorder
+    ) -> TaskAttributionDecision:
+        model_payload, model_runtime = self._try_model_reasoning(request)
         self._last_model_runtime = model_runtime
+        trace.add(
+            phase="input",
+            step_name="接收归属请求",
+            action="整理事件、证据、候选任务和会话记忆",
+            input_snapshot={
+                "request_id": request.request_id,
+                "event": request.event.model_dump(mode="json"),
+                "new_evidence_count": len(request.new_evidence),
+                "active_task_ids": [task.task_id for task in request.active_tasks],
+                "candidate_task_ids": [task.task_id for task in request.candidate_tasks],
+                "conversation_memory": request.conversation_memory.model_dump(mode="json"),
+                "policy_snapshot": request.policy_snapshot.model_dump(mode="json"),
+            },
+            decision_basis=[
+                "Task Attribution Agent（任务归属智能体）只消费证据、任务和记忆，不重新做 OCR（光学字符识别）。",
+                "VIN（车架号）不可覆盖；新 VIN 通常代表新车辆标的。",
+            ],
+        )
+        trace.add(
+            phase="model",
+            step_name="模型归属推理尝试",
+            action="调用真实大模型获取场景意图、作用域和决策提示",
+            input_snapshot={
+                "model_enabled": model_runtime.get("enabled"),
+                "provider": model_runtime.get("provider"),
+                "model": model_runtime.get("model"),
+                "endpoint": model_runtime.get("endpoint"),
+            },
+            output_snapshot={
+                "fallback_used": model_runtime.get("fallback_used"),
+                "fallback_policy": model_runtime.get("fallback_policy"),
+                "reason": model_runtime.get("reason"),
+                "error": model_runtime.get("error"),
+                "model_payload": model_payload,
+            },
+            decision_basis=[
+                "真实模型不可用或调用失败时只进入可见 fallback（兜底逻辑），不冒充模型能力。",
+                "当前归属仍以本地业务护栏和候选评分输出最终决策。",
+            ],
+        )
 
         view = self._view(request.new_evidence)
         candidates = self._score_candidates(request, view)
@@ -50,6 +105,40 @@ class TaskAttributionAgent:
         detected_entities = self._detected_entities(view)
         used_relationships = self._relationships(view, request)
         frame_values = self._frame_values_in_order(request.new_evidence, view)
+        trace.add(
+            phase="evidence_view",
+            step_name="证据视图构建",
+            action="将 Evidence（证据）按车辆、人员、意图和报价字段归类",
+            output_snapshot={
+                "vehicles": view.vehicles,
+                "parties": view.parties,
+                "intents": view.intents,
+                "quote_fields": view.quote_fields,
+                "evidence_ids": view.evidence_ids,
+                "weak_only": view.weak_only,
+                "frame_values_in_order": frame_values,
+            },
+            decision_basis=[
+                "强车辆实体优先参与匹配。",
+                "只有姓名等弱证据时降低自动归属置信度。",
+            ],
+        )
+        trace.add(
+            phase="candidate_scoring",
+            step_name="候选任务评分",
+            action="根据车辆、人员、阶段、焦点任务和最近批量任务集合计算候选分",
+            output_snapshot={
+                "candidates": [item.model_dump(mode="json") for item in candidates],
+                "conflicts": conflicts,
+                "detected_entities": detected_entities,
+                "used_relationships": used_relationships,
+            },
+            decision_basis=[
+                "车架号一致权重最高；车牌、发动机号、证件号、阶段意图作为辅助信号。",
+                "高风险阶段的信息冲突会触发人工或确认。",
+            ],
+            risk_notes=conflicts,
+        )
 
         if self._should_ignore(view, request):
             return self._decision(
@@ -433,7 +522,15 @@ class TaskAttributionAgent:
                     "多 VIN 新报价拆分为多个独立单任务。",
                     "省略式修改需要结合会话焦点任务或最近批量任务集合。",
                 ],
-                "expected_json_keys": ["scenario_intent", "scope", "decision_hint", "business_reason"],
+                "expected_json_keys": [
+                    "scenario_intent",
+                    "scope",
+                    "decision_hint",
+                    "business_reason",
+                    "reasoning_steps",
+                    "candidate_analysis",
+                    "risk_analysis",
+                ],
             },
             output_schema={
                 "type": "object",
@@ -442,10 +539,18 @@ class TaskAttributionAgent:
                     "scope": {"type": "string"},
                     "decision_hint": {"type": "string"},
                     "business_reason": {"type": "string"},
+                    "reasoning_steps": {"type": "array", "items": {"type": "string"}},
+                    "candidate_analysis": {"type": "array", "items": {"type": "object"}},
+                    "risk_analysis": {"type": "array", "items": {"type": "string"}},
                 },
             },
         )
-        return call.content if call.ok else None, self._runtime_dict(call.status, fallback_used=not call.ok, error=call.error)
+        runtime = self._runtime_dict(call.status, fallback_used=not call.ok, error=call.error)
+        if call.raw_text is not None:
+            runtime["raw_model_text"] = call.raw_text
+        if call.content is not None:
+            runtime["model_output_keys"] = sorted(call.content.keys())
+        return call.content if call.ok else None, runtime
 
     def _runtime_dict(self, status: Any, fallback_used: bool, error: str | None = None) -> dict[str, Any]:
         payload = status.__dict__.copy()
@@ -822,6 +927,37 @@ class TaskAttributionAgent:
         new_task_hint: dict | None = None,
         selected_task_ids: list[str] | None = None,
     ) -> TaskAttributionDecision:
+        trace = _CURRENT_TRACE.get()
+        if trace:
+            trace.add(
+                phase="decision",
+                step_name="最终归属决策",
+                action="选择任务归属分支并生成状态建议",
+                rationale=reason,
+                output_snapshot={
+                    "decision": decision.value,
+                    "selected_task_id": selected_task_id,
+                    "selected_task_ids": selected_task_ids
+                    or ([selected_task_id] if selected_task_id else []),
+                    "confidence": confidence,
+                    "risk_level": risk_level.value,
+                    "required_confirmation": decision == AttributionDecision.hold_for_confirmation
+                    or bool(confirmation_question),
+                    "fallback_action": fallback_action,
+                    "next_stage": next_stage,
+                    "next_action": next_action,
+                    "fact_write_allowed": fact_write_allowed,
+                    "new_task_hint": new_task_hint,
+                    "confirmation_question": confirmation_question,
+                    "used_evidence_ids": [e.evidence_id for e in request.new_evidence],
+                },
+                decision_basis=[
+                    reason,
+                    "候选任务、实体关系、冲突和 VIN（车架号）不可变规则共同决定该分支。",
+                ],
+                branch=decision.value,
+                risk_notes=conflicts,
+            )
         return TaskAttributionDecision(
             request_id=request.request_id,
             model_runtime=self._last_model_runtime,
@@ -849,4 +985,5 @@ class TaskAttributionAgent:
             fallback_action=fallback_action,
             used_evidence_ids=request.new_evidence and [e.evidence_id for e in request.new_evidence] or [],
             decision_log_summary=reason,
+            trace_log=trace.export() if trace else [],
         )

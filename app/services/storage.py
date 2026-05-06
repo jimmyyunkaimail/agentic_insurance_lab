@@ -189,3 +189,9 @@ class JsonStore:
         payload = self._load(row)
         return DecisionLog.model_validate(payload) if payload else None
 
+    def list_decisions_for_event(self, event_id: str) -> list[DecisionLog]:
+        with self.connect() as conn:
+            rows = conn.execute(
+                "select payload from decisions where event_id=? order by rowid", (event_id,)
+            ).fetchall()
+        return [DecisionLog.model_validate(json.loads(row["payload"])) for row in rows]

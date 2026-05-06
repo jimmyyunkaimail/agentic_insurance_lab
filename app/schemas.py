@@ -208,6 +208,22 @@ class MaterialActionHint(BaseModel):
     reason: str
 
 
+class ServiceTraceStep(BaseModel):
+    step_id: str = Field(default_factory=lambda: new_id("trace"))
+    phase: str
+    step_name: str
+    action: str
+    rationale: str | None = None
+    input_snapshot: dict[str, Any] = Field(default_factory=dict)
+    output_snapshot: dict[str, Any] = Field(default_factory=dict)
+    decision_basis: list[str] = Field(default_factory=list)
+    branch: str | None = None
+    risk_notes: list[str] = Field(default_factory=list)
+    started_at: str = Field(default_factory=now_iso)
+    ended_at: str | None = None
+    duration_ms: float | None = None
+
+
 class QuotedLink(BaseModel):
     quoted_message_id: str | None = None
     quoted_type: Literal["bot_message", "user_message", "unknown"] = "unknown"
@@ -259,6 +275,7 @@ class MaterialUnderstandingResult(BaseModel):
     risk_flags: list[RiskFlag] = Field(default_factory=list)
     conflict_candidates: list[ConflictCandidate] = Field(default_factory=list)
     material_action_hint: MaterialActionHint
+    trace_log: list[ServiceTraceStep] = Field(default_factory=list)
 
 
 class TaskStage(str, Enum):
@@ -391,6 +408,7 @@ class TaskAttributionDecision(BaseModel):
     fallback_action: str | None = None
     used_evidence_ids: list[str] = Field(default_factory=list)
     decision_log_summary: str
+    trace_log: list[ServiceTraceStep] = Field(default_factory=list)
 
 
 class PolicyResult(BaseModel):
@@ -405,4 +423,5 @@ class DecisionLog(BaseModel):
     request_payload: dict[str, Any]
     response_payload: dict[str, Any]
     policy_result: PolicyResult | None = None
+    trace_log: list[ServiceTraceStep] = Field(default_factory=list)
     created_at: str = Field(default_factory=now_iso)

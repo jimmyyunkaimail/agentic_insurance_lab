@@ -31,6 +31,7 @@ from app.schemas import (
     new_id,
 )
 from app.services.attachment_storage import AttachmentStorage
+from app.services.tracing import TraceRecorder
 
 VIN_RE = re.compile(r"\b[A-HJ-NPR-Z0-9]{17}\b", re.IGNORECASE)
 PHONE_RE = re.compile(r"\b1[3-9]\d{9}\b")
@@ -138,17 +139,89 @@ class MaterialUnderstandingAgent:
 
     def run(self, request: MaterialUnderstandingRequest | MessageEvent) -> MaterialUnderstandingResult:
         event = request if isinstance(request, MessageEvent) else request.to_event()
+        trace = TraceRecorder("material_understanding")
+        trace.add(
+            phase="input",
+            step_name="接收消息",
+            action="标准化验证台输入为 MessageEvent（消息事件）",
+            input_snapshot={
+                "event_id": event.event_id,
+                "conversation_id": event.conversation_id,
+                "message_type": event.message_type.value,
+                "content_text": event.content_text,
+                "attachments": [item.model_dump(mode="json") for item in event.attachments],
+                "quoted_context": event.quoted_context.model_dump(mode="json")
+                if event.quoted_context
+                else None,
+            },
+            output_snapshot={
+                "has_text": bool(event.content_text.strip()),
+                "attachment_count": len(event.attachments),
+                "quoted_message_present": event.quoted_context is not None,
+            },
+            decision_basis=["引用消息只用于关联展示，不作为当前槽位来源。"],
+        )
         model_payload, model_runtime = self._try_model_understanding(event)
+        trace.add(
+            phase="model",
+            step_name="模型理解尝试",
+            action="调用真实大模型或记录 fallback（兜底逻辑）原因",
+            input_snapshot={
+                "model_enabled": model_runtime.get("enabled"),
+                "provider": model_runtime.get("provider"),
+                "model": model_runtime.get("model"),
+                "endpoint": model_runtime.get("endpoint"),
+                "input_modalities": model_runtime.get("input_modalities", []),
+            },
+            output_snapshot={
+                "fallback_used": model_runtime.get("fallback_used"),
+                "fallback_policy": model_runtime.get("fallback_policy"),
+                "reason": model_runtime.get("reason"),
+                "error": model_runtime.get("error"),
+                "model_payload": model_payload,
+            },
+            decision_basis=[
+                "真实模型不可用或调用失败时，不伪装成功。",
+                "模型输出只作为材料理解候选，仍需本地规则合并与校验。",
+            ],
+        )
         documents = self._merge_model_documents(event, model_payload)
         textual_document = self._textual_document(event) if self._has_text_material(event) else None
         if textual_document:
             documents.append(textual_document)
+        trace.add(
+            phase="document",
+            step_name="材料分类与合并",
+            action="合并模型识别材料、附件文件名规则分类和文本材料",
+            output_snapshot={
+                "document_count": len(documents),
+                "documents": [item.model_dump(mode="json") for item in documents],
+                "textual_document_added": textual_document is not None,
+            },
+            decision_basis=[
+                "模型材料识别优先覆盖同一附件，本地附件分类补齐未覆盖附件。",
+                "有正文文本时补充 textual_business_material（文本业务材料）。",
+            ],
+        )
 
         evidence = self._dedupe_evidence(
             [
                 *self._model_evidence(event, documents, model_payload),
                 *self._extract_text_evidence(event, documents),
             ]
+        )
+        trace.add(
+            phase="evidence",
+            step_name="证据抽取与去重",
+            action="从模型结构化输出和当前消息文本抽取 Evidence（证据）",
+            output_snapshot={
+                "evidence_count": len(evidence),
+                "evidence": [item.model_dump(mode="json") for item in evidence],
+            },
+            decision_basis=[
+                "Evidence（证据）保留来源、置信度和校验状态，供任务归属 Agent 消费。",
+                "同字段同值证据会去重，避免重复影响候选评分。",
+            ],
         )
         risks = self._build_risks(event, documents, evidence)
         conflicts = []
@@ -157,6 +230,25 @@ class MaterialUnderstandingAgent:
             next_route = "ignore"
         current_intent = self._canonical_model_intent(model_payload.get("current_intent")) if model_payload else None
         speech_act = model_payload.get("speech_act") if model_payload else None
+        trace.add(
+            phase="route",
+            step_name="材料路由判断",
+            action="根据材料、证据和风险决定下一步服务流程",
+            output_snapshot={
+                "risk_flags": [item.model_dump(mode="json") for item in risks],
+                "conflict_candidates": conflicts,
+                "next_route": next_route,
+                "current_intent": current_intent
+                or self._infer_current_intent(event.content_text, evidence, documents),
+                "speech_act": speech_act or self._infer_speech_act(event.content_text, evidence),
+            },
+            decision_basis=[
+                "高风险材料进入 manual_review（人工复核）。",
+                "无材料无证据时进入 ignore（忽略），其余进入 task_attribution（任务归属）。",
+            ],
+            risk_notes=[item.description for item in risks],
+            branch=next_route,
+        )
         result = MaterialUnderstandingResult(
             event_id=event.event_id,
             model_runtime=model_runtime,
@@ -188,6 +280,7 @@ class MaterialUnderstandingAgent:
                 suggested_follow_up=self._suggest_follow_up(risks),
                 reason=self._action_reason(next_route, documents, evidence),
             ),
+            trace_log=trace.export(),
         )
         return result
 
@@ -229,6 +322,8 @@ class MaterialUnderstandingAgent:
                     "party_mentions",
                     "documents",
                     "evidence_list",
+                    "reasoning_steps",
+                    "uncertainties",
                 ],
             },
             multimodal_content=self._multimodal_content(event),
@@ -242,10 +337,16 @@ class MaterialUnderstandingAgent:
                     "party_mentions": {"type": "array", "items": {"type": "object"}},
                     "documents": {"type": "array", "items": {"type": "object"}},
                     "evidence_list": {"type": "array", "items": {"type": "object"}},
+                    "reasoning_steps": {"type": "array", "items": {"type": "string"}},
+                    "uncertainties": {"type": "array", "items": {"type": "string"}},
                 },
             },
         )
         runtime = self._runtime_dict(call.status, fallback_used=not call.ok, error=call.error)
+        if call.raw_text is not None:
+            runtime["raw_model_text"] = call.raw_text
+        if call.content is not None:
+            runtime["model_output_keys"] = sorted(call.content.keys())
         return call.content if call.ok else None, runtime
 
     def _multimodal_content(self, event: MessageEvent) -> list[dict[str, Any]]:

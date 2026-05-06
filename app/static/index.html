@@ -407,6 +407,42 @@
       }
       .step-title { font-weight: 750; margin-bottom: 3px; }
       .step-text { color: var(--muted); font-size: 13px; line-height: 1.55; }
+      .reasoning-card {
+        border: 1px solid var(--line);
+        border-radius: 10px;
+        background: #fff;
+        padding: 10px;
+      }
+      .reasoning-main {
+        color: var(--text);
+        font-size: 14px;
+        line-height: 1.55;
+        overflow-wrap: anywhere;
+      }
+      .reasoning-facts {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 6px;
+        margin-top: 8px;
+      }
+      .reasoning-fact {
+        border: 1px solid rgba(148, 163, 184, 0.35);
+        border-radius: 999px;
+        background: #f8fafc;
+        color: #475569;
+        padding: 4px 8px;
+        font-size: 12px;
+        line-height: 1.35;
+        overflow-wrap: anywhere;
+      }
+      .reasoning-card details {
+        margin-top: 8px;
+        color: var(--muted);
+      }
+      .reasoning-card summary {
+        cursor: pointer;
+        font-size: 12px;
+      }
       table { width: 100%; border-collapse: collapse; font-size: 13px; }
       th, td { border-bottom: 1px solid var(--line); text-align: left; padding: 8px 6px; vertical-align: top; }
       th { color: var(--muted); font-weight: 700; }
@@ -1502,11 +1538,14 @@
         const risks = material.risk_flags.map((risk) => `${risk.risk_type}：${risk.description}`);
         const changes = (workbench.changes || []).map((change) => change.description);
         const runtime = material.model_runtime || {};
+        const routeText = runtime.routed_from
+          ? `；动态路由：${runtime.routed_from} -> ${runtime.provider}（${runtime.route_reason || "按输入模态选择"}）`
+          : "";
         materialSummary.innerHTML = `
           <div class="insight-list">
             <div class="insight-item">
               <strong>模型运行状态</strong>
-              ${escapeHtml(runtime.fallback_used ? `未使用真实大模型：${runtime.reason || "模型不可用"}` : `已使用真实大模型：${runtime.provider} / ${runtime.model}`)}
+              ${escapeHtml(runtime.fallback_used ? `未使用真实大模型：${runtime.reason || "模型不可用"}` : `已使用真实大模型：${runtime.provider} / ${runtime.model}${routeText}`)}
             </div>
             <div class="insight-item">
               <strong>当前模型理解后的意图</strong>
@@ -1548,11 +1587,14 @@
           .map((item) => `${item.field_label}=${item.normalized_value}（${item.evidence_id}）`);
         const candidateReasons = candidates.map((candidate) => `${candidate.task_id}：${Math.round(candidate.score)} 分；${candidate.reason}`);
         const runtime = attribution.model_runtime || {};
+        const routeText = runtime.routed_from
+          ? `；动态路由：${runtime.routed_from} -> ${runtime.provider}（${runtime.route_reason || "按输入模态选择"}）`
+          : "";
         attributionSummary.innerHTML = `
           <div class="insight-list">
             <div class="insight-item">
               <strong>模型运行状态</strong>
-              ${escapeHtml(runtime.fallback_used ? `未使用真实大模型：${runtime.reason || "模型不可用"}` : `已使用真实大模型：${runtime.provider} / ${runtime.model}`)}
+              ${escapeHtml(runtime.fallback_used ? `未使用真实大模型：${runtime.reason || "模型不可用"}` : `已使用真实大模型：${runtime.provider} / ${runtime.model}${routeText}`)}
             </div>
             <div class="insight-item">
               <strong>它把消息归到哪里？</strong>
@@ -1582,28 +1624,204 @@
         `;
       }
 
+      function traceSnapshotHtml(step) {
+        const payload = {
+          rationale: step.rationale || null,
+          input_snapshot: step.input_snapshot || {},
+          output_snapshot: step.output_snapshot || {},
+          decision_basis: step.decision_basis || [],
+          branch: step.branch || null,
+          risk_notes: step.risk_notes || [],
+          duration_ms: step.duration_ms || null,
+        };
+        return `<details><summary>结构化日志</summary><pre style="white-space:pre-wrap;margin:8px 0 0;font-size:12px">${escapeHtml(JSON.stringify(payload, null, 2))}</pre></details>`;
+      }
+
+      function readableValue(value) {
+        if (value === undefined || value === null || value === "") return "";
+        if (Array.isArray(value)) return value.map(readableValue).filter(Boolean).join("、");
+        if (typeof value === "object") {
+          return Object.entries(value)
+            .filter(([, item]) => item !== undefined && item !== null && item !== "")
+            .map(([key, item]) => `${key}=${readableValue(item)}`)
+            .join("；");
+        }
+        return String(value).replace(/\s+/g, " ").trim();
+      }
+
+      function compactText(value) {
+        return readableValue(value);
+      }
+
+      function pickList(items, maxCount = 3) {
+        return (items || []).filter(Boolean).slice(0, maxCount);
+      }
+
+      function formatEvidenceItems(items) {
+        return pickList(items, 4).map((item) => `${item.field_label || item.field_name}=${item.normalized_value}`);
+      }
+
+      function summarizeModelPayload(payload) {
+        if (!payload) return [];
+        const facts = [];
+        if (payload.current_intent) facts.push(`意图 ${intentLabel(payload.current_intent)}`);
+        if (payload.speech_act) facts.push(`话术 ${payload.speech_act}`);
+        (payload.vehicle_mentions || []).slice(0, 2).forEach((item) => {
+          const vin = item.vin || item.frame_no || item.frameNo;
+          const plate = item.license_no || item.vehicleLicenseNo;
+          if (vin) facts.push(`VIN ${vin}`);
+          if (plate) facts.push(`车牌 ${plate}`);
+        });
+        (payload.quote_plan_mentions || []).slice(0, 2).forEach((item) => {
+          const label = item.field_label || item.insurance_type || item.field_name || "报价字段";
+          const value = item.target_amount || item.normalized_value || item.raw_value;
+          facts.push(`${label}${value ? `=${value}` : ""}`);
+        });
+        if (payload.decision_hint) facts.push(`模型提示 ${readableValue(payload.decision_hint)}`);
+        if (payload.scope) facts.push(`作用域 ${readableValue(payload.scope)}`);
+        return facts;
+      }
+
+      function readableTrace(step) {
+        const phase = step.phase || "";
+        const input = step.input_snapshot || {};
+        const output = step.output_snapshot || {};
+        const facts = [];
+        let main = step.rationale || step.action || step.step_name || phase;
+
+        if (phase === "material_understanding.input") {
+          main = input.content_text
+            ? `收到当前消息：“${compactText(input.content_text)}”。`
+            : "收到一条附件消息。";
+          facts.push(`类型 ${input.message_type || output.message_type || "unknown"}`);
+          facts.push(`附件 ${output.attachment_count ?? 0} 个`);
+          if (output.quoted_message_present) facts.push("含引用，仅作关联");
+        } else if (phase === "material_understanding.model") {
+          if (output.fallback_used) {
+            main = `未走真实模型，原因：${compactText(output.reason || output.error || "模型不可用")}。`;
+          } else {
+            main = "真实模型完成初判，输出意图、实体和报价方案候选。";
+            facts.push(...summarizeModelPayload(output.model_payload));
+          }
+          facts.push(output.provider ? `${output.provider}/${output.model || ""}` : null);
+        } else if (phase === "material_understanding.document") {
+          const docs = output.documents || [];
+          main = docs.length
+            ? `识别 ${docs.length} 份材料：${pickList(docs.map((doc) => doc.document_name || doc.document_type), 3).join("、")}。`
+            : "未识别到可用材料。";
+          if (output.textual_document_added) facts.push("补充文本材料");
+        } else if (phase === "material_understanding.evidence") {
+          const evidence = output.evidence || [];
+          main = evidence.length
+            ? `抽取 ${evidence.length} 条证据：${formatEvidenceItems(evidence).join("；")}。`
+            : "没有抽取到车辆、人员、报价方案或意图证据。";
+        } else if (phase === "material_understanding.route") {
+          main = `材料理解给出的下一步是 ${output.next_route || step.branch || "未知"}。`;
+          facts.push(output.current_intent ? `意图 ${intentLabel(output.current_intent)}` : null);
+          if ((output.risk_flags || []).length) facts.push(`风险 ${(output.risk_flags || []).length} 个`);
+        } else if (phase === "workbench.local_state") {
+          const changes = output.changes || [];
+          main = changes.length
+            ? `页面工作台记录变更：${pickList(changes.map((item) => item.description), 2).join("；")}。`
+            : "页面工作台没有写入新槽位。";
+          facts.push(output.attribution_label);
+        } else if (phase === "task_attribution.input") {
+          main = `开始判断归属：本次有 ${input.new_evidence_count || 0} 条证据、${(input.active_task_ids || []).length} 个活跃任务。`;
+          if ((input.active_task_ids || []).length) facts.push(`活跃任务 ${(input.active_task_ids || []).join("、")}`);
+          const focused = input.conversation_memory?.focused_task_id;
+          if (focused) facts.push(`焦点任务 ${focused}`);
+        } else if (phase === "task_attribution.model") {
+          if (output.fallback_used) {
+            main = `归属模型未参与，原因：${compactText(output.reason || output.error || "模型不可用")}。`;
+          } else {
+            const payload = output.model_payload || {};
+            main = payload.business_reason
+              ? `模型归属提示：${compactText(payload.business_reason)}。`
+              : "真实模型给出归属提示，最终仍由业务规则和护栏校验。";
+            facts.push(...summarizeModelPayload(payload));
+          }
+        } else if (phase === "task_attribution.evidence_view") {
+          const vehicles = Object.entries(output.vehicles || {}).map(([key, values]) => `${key}=${(values || []).join("/")}`);
+          const parties = Object.entries(output.parties || {}).map(([key, values]) => `${key}=${(values || []).join("/")}`);
+          const intents = output.intents || [];
+          const quoteFields = output.quote_fields || [];
+          main = `归属视图：${[...vehicles, ...parties, ...intents.map((item) => intentLabel(item)), ...quoteFields].slice(0, 4).join("；") || "没有强实体"}。`;
+          if (output.weak_only) facts.push("证据偏弱");
+        } else if (phase === "task_attribution.candidate_scoring") {
+          const candidates = output.candidates || [];
+          main = candidates.length
+            ? `候选评分最高：${candidates[0].task_id} ${Math.round(candidates[0].score)} 分，原因是${candidates[0].reason || "命中上下文"}。`
+            : "没有召回可信候选任务。";
+          if ((output.conflicts || []).length) facts.push(`冲突 ${(output.conflicts || []).join("、")}`);
+        } else if (phase === "task_attribution.decision") {
+          const target = displayTaskIds(output.selected_task_ids || (output.selected_task_id ? [output.selected_task_id] : []));
+          main = `最终决策：${decisionLabel(output.decision)}，目标任务：${target}。`;
+          facts.push(`置信度 ${Math.round((output.confidence || 0) * 100)}%`);
+          facts.push(`风险 ${riskLabel(output.risk_level)}`);
+          facts.push(output.fact_write_allowed ? "允许写入事实" : "不写入事实");
+          if (output.confirmation_question) facts.push(`追问：${compactText(output.confirmation_question)}`);
+        } else if (phase === "policy.local_guardrail" || phase === "policy.guardrail") {
+          main = `策略结果：${output.result || output.policy_result?.result || step.branch}，${compactText(step.rationale || output.reason || output.policy_result?.reason || "")}。`;
+        }
+
+        if (!facts.length && (step.decision_basis || []).length) {
+          facts.push(...pickList(step.decision_basis.map((item) => compactText(item)), 2));
+        }
+        if ((step.risk_notes || []).length && !facts.some((item) => String(item).startsWith("冲突"))) {
+          facts.push(`注意 ${pickList(step.risk_notes, 2).join("；")}`);
+        }
+        return { main, facts: facts.filter(Boolean).slice(0, 4) };
+      }
+
       function renderTimeline(data) {
         const material = data.material_understanding;
         const attribution = data.task_attribution;
         const policy = data.policy_result;
         const workbench = data.workbench || {};
-        const attachmentText = data.event.attachments.length
-          ? `；附件：${data.event.attachments.map((item) => `${fileTypeLabel(item.file_type)} ${attachmentDisplayName(item)}`).join("、")}`
-          : "";
-        const quoteText = workbench.quote_display_text
-          ? `；引用显示关联：${shortText(workbench.quote_display_text)}`
-          : "";
-        const steps = [
-          { title: "接收 Message Event（消息事件）", text: `输入类型：${data.event.message_type}${attachmentText}${quoteText}；模型理解对象是当前最终发送消息：${data.event.content_text || "[附件消息]"}。` },
-          { title: "材料理解 Agent（Material Understanding Agent，材料理解智能体）", text: `当前意图：${intentLabel(workbench.intent)}；识别 ${material.documents.length} 份材料，生成 ${material.evidence_list.length} 条 Evidence（证据）。` },
-          { title: "任务工作台 Task Workspace（任务工作台）", text: `根据 Evidence（证据）计算槽位变更：${(workbench.changes || []).map((item) => item.description).join("；") || "无变更"}。` },
-          { title: "任务归属 Agent（Task Attribution Agent，任务归属智能体）", text: `归属结果：${workbench.attribution_label || decisionLabel(attribution.decision)}；目标任务：${displayTaskIds(workbench.selected_task_ids || attribution.selected_task_ids || (workbench.selected_task_id ? [workbench.selected_task_id] : []))}；理由：${attribution.business_reason}` },
-          { title: "Policy Check（策略审查）", text: `策略结果：${policy.result}；说明：${policy.reason}` },
+        const traceSteps = [
+          ...(material.trace_log || []),
+          {
+            phase: "workbench.local_state",
+            step_name: "本地任务工作台更新",
+            action: "根据归属结果预览或写入页面本地任务列表",
+            rationale: (workbench.changes || []).map((item) => item.description).join("；") || "无槽位变更，仅保留过程记录。",
+            output_snapshot: {
+              selected_task_id: workbench.selected_task_id,
+              selected_task_ids: workbench.selected_task_ids || [],
+              attribution_label: workbench.attribution_label,
+              changes: workbench.changes || [],
+              task_list_size: taskList.length,
+            },
+            decision_basis: ["等待确认或转人工时只预览，不写入任务事实。"],
+            branch: workbench.attribution_label,
+          },
+          ...(attribution.trace_log || []),
+          {
+            phase: "policy.local_guardrail",
+            step_name: "策略护栏结论",
+            action: "根据归属决策生成页面侧 Policy Check（策略审查）",
+            rationale: policy.reason,
+            output_snapshot: policy,
+            decision_basis: ["高风险、等待确认、转人工不会自动写入事实。"],
+            branch: policy.result,
+          },
         ];
-        logicTimeline.innerHTML = steps.map((step, index) => `
+        logicTimeline.innerHTML = traceSteps.map((step, index) => `
           <div class="step">
             <div class="step-number">${index + 1}</div>
-            <div><div class="step-title">${escapeHtml(step.title)}</div><div class="step-text">${escapeHtml(step.text)}</div></div>
+            <div class="reasoning-card">
+              <div class="step-title">${escapeHtml(step.step_name || step.phase)}</div>
+              <div class="step-text">
+                ${(() => {
+                  const readable = readableTrace(step);
+                  return `
+                    <div class="reasoning-main">${escapeHtml(readable.main)}</div>
+                    ${readable.facts.length ? `<div class="reasoning-facts">${readable.facts.map((item) => `<span class="reasoning-fact">${escapeHtml(item)}</span>`).join("")}</div>` : ""}
+                  `;
+                })()}
+                ${traceSnapshotHtml(step)}
+              </div>
+            </div>
           </div>
         `).join("");
       }
@@ -1875,8 +2093,9 @@
           const response = await fetch(apiUrl("/runtime"));
           const runtime = await response.json();
           runtimeState = runtime;
+          const routingText = runtime.routing_enabled ? "｜动态路由已启用" : "";
           runtimePill.textContent = runtime.enabled
-            ? `真实模型已启用｜${runtime.provider} / ${runtime.model} / ${runtime.endpoint}`
+            ? `真实模型已启用｜${runtime.provider} / ${runtime.model} / ${runtime.endpoint}${routingText}`
             : `真实模型不可用｜${runtime.active_provider || "未配置"}｜${runtime.reason}`;
         } catch {
           runtimeState = null;

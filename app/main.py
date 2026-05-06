@@ -21,6 +21,7 @@ from app.schemas import (
 from app.services.policy import PolicyEngine
 from app.services.attachment_storage import AttachmentStorage
 from app.services.storage import JsonStore
+from app.services.tracing import TraceRecorder
 
 app = FastAPI(title="车险出单双 Agent 本地验证框架", version="0.1.0")
 app.add_middleware(
@@ -80,6 +81,7 @@ def run_material_agent(request: MaterialUnderstandingRequest) -> MaterialUnderst
             agent_name=result.agent_name,
             request_payload=request.model_dump(mode="json"),
             response_payload=result.model_dump(mode="json"),
+            trace_log=result.trace_log,
         )
     )
     return result
@@ -96,6 +98,24 @@ def run_task_agent(request: TaskAttributionRequest) -> TaskAttributionDecision:
             request_payload=request.model_dump(mode="json"),
             response_payload=result.model_dump(mode="json"),
             policy_result=policy_result,
+            trace_log=[
+                *result.trace_log,
+                TraceRecorder("policy")
+                .add(
+                    phase="guardrail",
+                    step_name="策略护栏检查",
+                    action="检查任务归属决策是否允许自动执行",
+                    input_snapshot={"decision": result.model_dump(mode="json")},
+                    output_snapshot={"policy_result": policy_result.model_dump(mode="json")},
+                    decision_basis=[
+                        "等待确认、转人工、高风险或冲突事实禁止自动写入。",
+                    ],
+                    branch=policy_result.result,
+                    risk_notes=[policy_result.reason]
+                    if policy_result.result != "approved"
+                    else [],
+                )
+            ],
         )
     )
     return result
@@ -103,11 +123,31 @@ def run_task_agent(request: TaskAttributionRequest) -> TaskAttributionDecision:
 
 @app.post("/events/ingest")
 def ingest_event(request: MaterialUnderstandingRequest) -> dict:
+    service_trace = TraceRecorder("service_flow")
     event = request.to_event()
     store.save_event(event)
+    service_trace.add(
+        phase="event",
+        step_name="接入消息",
+        action="保存 MessageEvent（消息事件）并启动端到端服务流程",
+        input_snapshot={"request": request.model_dump(mode="json")},
+        output_snapshot={"event": event.model_dump(mode="json")},
+    )
     material_result = material_agent.run(event)
     store.save_documents(event.event_id, material_result.documents)
     store.save_evidences(event.event_id, material_result.evidence_list)
+    service_trace.add(
+        phase="material",
+        step_name="材料理解完成",
+        action="落库 Document（单证）和 Evidence（证据）",
+        output_snapshot={
+            "document_count": len(material_result.documents),
+            "evidence_count": len(material_result.evidence_list),
+            "next_route": material_result.material_action_hint.next_route,
+        },
+        decision_basis=[material_result.material_action_hint.reason],
+        branch=material_result.material_action_hint.next_route,
+    )
 
     active_tasks = [
         task
@@ -135,12 +175,31 @@ def ingest_event(request: MaterialUnderstandingRequest) -> dict:
     )
     attribution_result = task_agent.run(attribution_request)
     policy_result = policy_engine.check_attribution(attribution_result)
+    service_trace.add(
+        phase="attribution",
+        step_name="任务归属完成",
+        action="生成归属决策并执行策略护栏检查",
+        input_snapshot={
+            "active_task_ids": [task.task_id for task in active_tasks],
+            "candidate_task_ids": [task.task_id for task in candidate_tasks],
+        },
+        output_snapshot={
+            "decision": attribution_result.decision.value,
+            "selected_task_id": attribution_result.selected_task_id,
+            "selected_task_ids": attribution_result.selected_task_ids,
+            "policy_result": policy_result.model_dump(mode="json"),
+        },
+        decision_basis=[attribution_result.business_reason, policy_result.reason],
+        branch=policy_result.result,
+        risk_notes=attribution_result.entity_graph_summary.conflicts,
+    )
     store.save_decision(
         DecisionLog(
             event_id=event.event_id,
             agent_name=material_result.agent_name,
             request_payload=request.model_dump(mode="json"),
             response_payload=material_result.model_dump(mode="json"),
+            trace_log=[*service_trace.export(), *material_result.trace_log],
         )
     )
     store.save_decision(
@@ -150,6 +209,7 @@ def ingest_event(request: MaterialUnderstandingRequest) -> dict:
             request_payload=attribution_request.model_dump(mode="json"),
             response_payload=attribution_result.model_dump(mode="json"),
             policy_result=policy_result,
+            trace_log=[*service_trace.export(), *attribution_result.trace_log],
         )
     )
     return {
@@ -157,6 +217,7 @@ def ingest_event(request: MaterialUnderstandingRequest) -> dict:
         "material_understanding": material_result,
         "task_attribution": attribution_result,
         "policy_result": policy_result,
+        "service_trace": service_trace.export(),
     }
 
 
@@ -166,6 +227,7 @@ def get_event(event_id: str) -> dict:
     return {
         "event": event,
         "evidence": store.list_evidences_for_event(event_id),
+        "decisions": store.list_decisions_for_event(event_id),
     }
 
 

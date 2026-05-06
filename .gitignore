@@ -5,6 +5,8 @@ __pycache__/
 .env
 .env.*
 !.env.example
+config/model_secrets.local.yaml
+config/model_secrets.*.local.yaml
 .coverage
 .pytest_cache/
 .ruff_cache/
