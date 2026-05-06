@@ -455,6 +455,7 @@
           </div>
           <div class="composer-hint">支持图片、PDF（便携式文档格式）、Excel（电子表格）、Word（文字文档）等附件上传；图片/PDF 会把真实文件内容交给材料理解 Agent（智能体）做多模态解析。</div>
           <div class="sample-row" aria-label="快捷样例">
+            <button class="chip" data-sample="请帮忙初始报价&#10;车牌沪A8K3D2，车架号 LFMKN5BF2N3276921，发动机号 8AR123456&#10;车主张三，证件号 310101199001011234，手机号 13800138000&#10;投保人张三，被保人张三&#10;三者300万，非车388，今天起保">初始报价</button>
             <button class="chip" data-sample="车架号 LFMKN5BF2N3276921，三者改成300万，不要288">报价修改</button>
             <button class="chip" data-sample="改成500W吧，非车要548那款">省略式修改</button>
             <button class="chip" data-sample="LBV41DU01NS563230&#10;LBVKY1105LSX96031&#10;LBVHY5105NM447881&#10;LBV6R4101NM429666&#10;LBVHZ1109HMJ96311">批量 VIN</button>
@@ -598,6 +599,229 @@
       function shortText(text, maxLength = 72) {
         const value = (text || "").replace(/\s+/g, " ").trim();
         return value.length > maxLength ? `${value.slice(0, maxLength)}...` : value;
+      }
+
+      function samplePick(items) {
+        return items[Math.floor(Math.random() * items.length)];
+      }
+
+      function sampleInt(min, max) {
+        return Math.floor(Math.random() * (max - min + 1)) + min;
+      }
+
+      function sampleDifferent(currentValue, generator, maxTries = 8) {
+        let nextValue = generator();
+        for (let index = 0; index < maxTries && nextValue === currentValue; index += 1) {
+          nextValue = generator();
+        }
+        return nextValue;
+      }
+
+      function randomVin() {
+        const chars = "ABCDEFGHJKLMNPRSTUVWXYZ0123456789";
+        const prefixes = ["LFMKN5BF", "LBV41DU0", "LBVKY110", "LGWEF6A5", "LSVUD60T", "LGBH52E0"];
+        let vin = samplePick(prefixes);
+        while (vin.length < 17) {
+          vin += chars[sampleInt(0, chars.length - 1)];
+        }
+        return vin.slice(0, 17);
+      }
+
+      function randomLicenseNo() {
+        const province = samplePick(["沪", "苏", "浙", "粤", "京", "鲁", "皖"]);
+        const letter = samplePick("ABCDEFGHJKLMNPQRSTUVWXYZ".split(""));
+        const chars = "ABCDEFGHJKLMNPQRSTUVWXYZ0123456789";
+        let suffix = "";
+        while (suffix.length < 5) {
+          suffix += chars[sampleInt(0, chars.length - 1)];
+        }
+        return `${province}${letter}${suffix}`;
+      }
+
+      function randomPersonName() {
+        const surnames = ["张", "李", "王", "赵", "陈", "刘", "周", "吴", "孙", "黄"];
+        const names = ["伟", "敏", "磊", "娜", "洋", "静", "强", "芳", "晨", "欣", "嘉琪", "思远"];
+        return `${samplePick(surnames)}${samplePick(names)}`;
+      }
+
+      function randomPhone() {
+        const prefixes = ["136", "138", "139", "150", "158", "186", "188"];
+        return `${samplePick(prefixes)}${String(sampleInt(0, 99999999)).padStart(8, "0")}`;
+      }
+
+      function randomIdNo() {
+        const areas = ["310101", "320102", "330106", "440106", "110105", "370102"];
+        const year = sampleInt(1975, 1998);
+        const month = String(sampleInt(1, 12)).padStart(2, "0");
+        const day = String(sampleInt(1, 28)).padStart(2, "0");
+        const sequence = String(sampleInt(10, 999)).padStart(3, "0");
+        const checksum = samplePick("0123456789X".split(""));
+        return `${samplePick(areas)}${year}${month}${day}${sequence}${checksum}`;
+      }
+
+      function randomEngineNo() {
+        const chars = "ABCDEFGHJKLMNPQRSTUVWXYZ0123456789";
+        let value = samplePick(["8AR", "DMB", "L2B", "GW4G", "SQRE"]);
+        while (value.length < 9) {
+          value += chars[sampleInt(0, chars.length - 1)];
+        }
+        return value;
+      }
+
+      function randomThirdPartyAmount() {
+        return samplePick(["200万", "300万", "500万", "1000万"]);
+      }
+
+      function randomNonAutoAmount() {
+        return samplePick(["288", "388", "548", "588", "688"]);
+      }
+
+      function randomVehicleRef() {
+        return samplePick([
+          () => `车架号 ${randomVin()}`,
+          () => `VIN ${randomVin()}`,
+          () => `车牌${randomLicenseNo()}`,
+        ])();
+      }
+
+      function initialQuoteSample() {
+        const owner = randomPersonName();
+        const applicant = samplePick([owner, randomPersonName()]);
+        const insured = samplePick([owner, applicant, randomPersonName()]);
+        return [
+          "请帮忙初始报价",
+          `车牌${randomLicenseNo()}，车架号 ${randomVin()}，发动机号 ${randomEngineNo()}`,
+          `车主${owner}，证件号 ${randomIdNo()}，手机号 ${randomPhone()}`,
+          `投保人${applicant}，被保人${insured}`,
+          `三者${randomThirdPartyAmount()}，非车${randomNonAutoAmount()}，今天起保`,
+        ].join("\n");
+      }
+
+      function quoteModifySample() {
+        const thirdParty = randomThirdPartyAmount();
+        const nonAuto = randomNonAutoAmount();
+        return samplePick([
+          `${randomVehicleRef()}，三者改成${thirdParty}，不要${samplePick(["288", "388", "548"])}`,
+          `${randomVehicleRef()}，三者改成${thirdParty}，非车换${nonAuto}`,
+          `${randomVehicleRef()}，商业险方案调一下，三者${thirdParty}，驾意险不要`,
+          `${randomVehicleRef()}，三者改${thirdParty}，非车按${nonAuto}那款`,
+        ]);
+      }
+
+      function omittedModifySample() {
+        const thirdParty = randomThirdPartyAmount();
+        const nonAuto = randomNonAutoAmount();
+        return samplePick([
+          `改成${thirdParty}吧，非车要${nonAuto}那款`,
+          `刚才那台三者改成${thirdParty}，车上人员不动`,
+          `这个单非车换${nonAuto}，三者改成${thirdParty}`,
+          `按上面那台改，三者${thirdParty}，不要附加险`,
+        ]);
+      }
+
+      function batchVinSample() {
+        const count = sampleInt(3, 6);
+        return Array.from({ length: count }, () => randomVin()).join("\n");
+      }
+
+      function batchUpdateSample() {
+        const thirdParty = randomThirdPartyAmount();
+        const nonAuto = randomNonAutoAmount();
+        return samplePick([
+          `这几台三者改成${thirdParty}`,
+          `上面几台都按这个方案，三者改成${thirdParty}，非车${nonAuto}`,
+          `批量更新一下，三者改成${thirdParty}`,
+          `这些车非车都换${nonAuto}，三者改成${thirdParty}`,
+        ]);
+      }
+
+      function partyInfoSample() {
+        const name = randomPersonName();
+        return samplePick([
+          `车主${name}`,
+          `投保人：${name}`,
+          `被保人${name}`,
+          `车主是${name}，其他先不变`,
+        ]);
+      }
+
+      function expiredPaymentCodeSample() {
+        return samplePick([
+          "二维码过期了，重新发我",
+          "二维码发我一下，刚才扫不了",
+          "支付二维码过期了，帮忙重发",
+          "重新发二维码给我",
+        ]);
+      }
+
+      function confirmIssueSample() {
+        return samplePick([
+          "确认",
+          "确认出单",
+          "这个方案可以，安排出单",
+          "按这个出单吧",
+        ]);
+      }
+
+      function underwritingSample() {
+        return samplePick([
+          "核保一下",
+          "帮忙提交核保",
+          "这个单核保走一下",
+          "麻烦看下核保结果",
+        ]);
+      }
+
+      function nonAutoModifySample() {
+        const nonAuto = randomNonAutoAmount();
+        return samplePick([
+          `非车改${nonAuto}`,
+          `非车换${nonAuto}那款`,
+          `驾意险改成${nonAuto}`,
+          `非车产品按${nonAuto}出`,
+        ]);
+      }
+
+      function invoiceSample() {
+        return samplePick([
+          "发票",
+          "开票信息发你了，帮忙开票",
+          "这个单可以开发票了",
+          "保单出来后记得开票",
+        ]);
+      }
+
+      function newVinSample() {
+        return samplePick([
+          `车架号 ${randomVin()}`,
+          `VIN：${randomVin()}`,
+          `新增一台，车架号${randomVin()}`,
+          `再报一个 ${randomVin()}`,
+        ]);
+      }
+
+      const sampleGenerators = {
+        初始报价: initialQuoteSample,
+        报价修改: quoteModifySample,
+        省略式修改: omittedModifySample,
+        "批量 VIN": batchVinSample,
+        批量更新: batchUpdateSample,
+        单独人员信息: partyInfoSample,
+        支付码过期: expiredPaymentCodeSample,
+        确认出单: confirmIssueSample,
+        核保: underwritingSample,
+        非车修改: nonAutoModifySample,
+        发票: invoiceSample,
+        新车架号: newVinSample,
+      };
+
+      function refreshChipSample(button) {
+        const label = button.textContent.trim();
+        const generator = sampleGenerators[label];
+        if (!generator) return button.dataset.sample || "";
+        const nextSample = sampleDifferent(button.dataset.sample || "", generator);
+        button.dataset.sample = nextSample;
+        return nextSample;
       }
 
       function decisionLabel(decision) {
@@ -1630,6 +1854,11 @@
       document.querySelectorAll(".chip").forEach((button) => {
         button.addEventListener("click", () => {
           input.value = button.dataset.sample;
+          input.focus();
+        });
+        button.addEventListener("dblclick", (event) => {
+          event.preventDefault();
+          input.value = refreshChipSample(button);
           input.focus();
         });
       });
