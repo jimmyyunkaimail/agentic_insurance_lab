@@ -40,6 +40,24 @@ class MaterialUnderstandingAgentTest(unittest.TestCase):
         self.assertIn("unAutoProductInfo", fields)
         self.assertEqual(result.material_action_hint.next_route, "task_attribution")
 
+    def test_extracts_full_initial_quote_slots_from_compact_text(self) -> None:
+        agent = MaterialUnderstandingAgent(use_model=False)
+        result = agent.run(
+            MaterialUnderstandingRequest(
+                content_text="这台报价 浙HBR5MV LSVUD60TH2DAXLHTP 8ARLXK8SU 赵芳 "
+                "15835776930 370102198103159403 三者200万 + 非车548，今晚起"
+            )
+        )
+        slots = {item.field_name: item.normalized_value for item in result.evidence_list}
+        self.assertEqual(slots["frameNo"], "LSVUD60TH2DAXLHTP")
+        self.assertEqual(slots["vehicleLicenseNo"], "浙HBR5MV")
+        self.assertEqual(slots["engineNo"], "8ARLXK8SU")
+        self.assertEqual(slots["ownerName"], "赵芳")
+        self.assertEqual(slots["ownerMobile"], "15835776930")
+        self.assertEqual(slots["ownerIdNo"], "370102198103159403")
+        self.assertEqual(slots["thirdPartyLiabilityInsuranceForMotorVehicles"], "200万")
+        self.assertEqual(slots["unAutoProductInfo"], "548")
+
     def test_classifies_vehicle_license_attachment(self) -> None:
         agent = MaterialUnderstandingAgent(use_model=False)
         result = agent.run(

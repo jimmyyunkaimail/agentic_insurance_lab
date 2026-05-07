@@ -3,6 +3,7 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <link rel="icon" href="data:," />
     <title>车险出单双 Agent 验证台</title>
     <style>
       :root {
@@ -313,6 +314,26 @@
         line-height: 1.65;
         font-size: 14px;
       }
+      .slot-grid {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 7px;
+        margin-top: 6px;
+      }
+      .slot-row {
+        border: 1px solid rgba(148, 163, 184, 0.32);
+        border-radius: 8px;
+        background: rgba(255, 255, 255, 0.66);
+        padding: 7px 8px;
+        font-size: 12px;
+        line-height: 1.45;
+        overflow-wrap: anywhere;
+      }
+      .slot-row .slot-entity {
+        display: block;
+        color: var(--muted);
+        margin-bottom: 2px;
+      }
       .decision-hero {
         display: grid;
         grid-template-columns: minmax(0, 1fr) minmax(220px, 0.45fr);
@@ -461,6 +482,7 @@
       @media (max-width: 980px) {
         .app-shell { grid-template-columns: 1fr; }
         .decision-hero { grid-template-columns: 1fr; }
+        .slot-grid { grid-template-columns: 1fr; }
         .task-meta { grid-template-columns: 1fr; }
         .phone-panel, .result-panel { min-height: auto; }
       }
@@ -1176,6 +1198,16 @@
         return taskIds.join("、");
       }
 
+      function selectedTaskIdsFor(workbench, attribution) {
+        const ids = workbench?.selected_task_ids?.length
+          ? workbench.selected_task_ids
+          : attribution?.selected_task_ids?.length
+            ? attribution.selected_task_ids
+            : [];
+        const singleId = workbench?.selected_task_id || attribution?.selected_task_id;
+        return ids.length ? ids : (singleId ? [singleId] : []);
+      }
+
       function derivePolicyResult(attribution) {
         if (attribution.decision === "route_to_manual") {
           return { result: "route_to_manual", reason: "任务归属 Agent（智能体）认为存在高风险或冲突，应转人工。" };
@@ -1210,6 +1242,7 @@
             : `等待确认${selectedTaskId ? `，候选任务 ${selectedTaskId}` : ""}`;
         } else if (attribution.decision === "create_new_task") {
           selectedTaskId = nextTaskId();
+          selectedTaskIds = [selectedTaskId];
           targetTask = taskFromEvidence(selectedTaskId, event, material, attribution);
           targetTask.local_message_count = 1;
           targetTask.local_last_intent = intent;
@@ -1452,17 +1485,92 @@
         return `<ul style="margin:0;padding-left:18px;line-height:1.8;font-size:13px">${items.map((item) => `<li>${escapeHtml(item)}</li>`).join("")}</ul>`;
       }
 
+      function entityTypeLabel(entityType) {
+        const labels = {
+          vehicle: "车辆实体",
+          party: "人员实体",
+          role: "角色实体",
+          insurance_plan: "报价方案实体",
+          non_auto_product: "非车产品实体",
+          credential: "业务凭证实体",
+          intent: "业务意图实体",
+        };
+        return labels[entityType] || entityType || "未知实体";
+      }
+
+      function fieldDisplayName(item) {
+        return `${item.field_label || item.field_name}（${item.field_name || "unknown"}）`;
+      }
+
+      function evidenceSlotRows(evidence) {
+        const rows = [];
+        const seen = new Set();
+        (evidence || []).forEach((item) => {
+          const key = `${item.entity_type}:${item.field_name}:${item.normalized_value}`;
+          if (seen.has(key)) return;
+          seen.add(key);
+          rows.push({
+            entity: entityTypeLabel(item.entity_type),
+            field: fieldDisplayName(item),
+            value: item.normalized_value,
+            source: sourceTypeLabel(item.source_type),
+          });
+        });
+        return rows;
+      }
+
+      function slotGrid(rows) {
+        if (!rows || !rows.length) return `<div class="empty">暂无抽取槽位</div>`;
+        return `<div class="slot-grid">${rows.map((row) => `
+          <div class="slot-row">
+            <span class="slot-entity">${escapeHtml(row.entity)} · ${escapeHtml(row.source || "未知来源")}</span>
+            <strong>${escapeHtml(row.field)}</strong> = ${escapeHtml(row.value)}
+          </div>
+        `).join("")}</div>`;
+      }
+
+      function evidenceScopeParts(evidence) {
+        const groups = new Map();
+        (evidence || []).forEach((item) => {
+          const entity = entityTypeLabel(item.entity_type);
+          if (!groups.has(entity)) groups.set(entity, new Map());
+          const fieldMap = groups.get(entity);
+          const field = fieldDisplayName(item);
+          if (!fieldMap.has(field)) fieldMap.set(field, new Set());
+          fieldMap.get(field).add(item.normalized_value);
+        });
+        return [...groups.entries()].map(([entity, fieldMap]) => {
+          const fields = [...fieldMap.entries()]
+            .map(([field, values]) => `${field}=${[...values].join("/")}`)
+            .join("、");
+          return `${entity}：${fields}`;
+        });
+      }
+
+      function evidenceFieldList(items) {
+        const seen = new Set();
+        return (items || [])
+          .map((item) => {
+            const key = `${item.entity_type}:${item.field_name}:${item.normalized_value}`;
+            if (seen.has(key)) return null;
+            seen.add(key);
+            return `${entityTypeLabel(item.entity_type)}.${fieldDisplayName(item)}=${item.normalized_value}`;
+          })
+          .filter(Boolean);
+      }
+
       function renderCurrentMessage(data) {
         const event = data.event;
         const attribution = data.task_attribution;
         const material = data.material_understanding;
         const workbench = data.workbench || {};
-        const taskTarget = displayTaskIds(workbench.selected_task_ids || attribution.selected_task_ids || (workbench.selected_task_id ? [workbench.selected_task_id] : []));
+        const taskTarget = displayTaskIds(selectedTaskIdsFor(workbench, attribution));
         const attachmentText = event.attachments.length
           ? event.attachments.map((item) => `${fileTypeLabel(item.file_type)}：${attachmentDisplayName(item)}`).join("；")
           : "无";
         const quoteText = workbench.quote_display_text || "无";
         const changes = (workbench.changes || []).map((change) => change.description);
+        const slotRows = evidenceSlotRows(material.evidence_list);
         currentMessageSummary.innerHTML = `
           <div class="decision-hero">
             <div class="decision-main">
@@ -1471,6 +1579,7 @@
                 <strong>当前验证消息：</strong>${escapeHtml(event.content_text || "[附件消息]")}<br>
                 <strong>当前意图：</strong>${escapeHtml(intentLabel(workbench.intent))}<br>
                 <strong>归属目标：</strong>${escapeHtml(taskTarget)}<br>
+                <strong>本次抽取槽位（${slotRows.length} 个）：</strong>${slotGrid(slotRows)}
                 <strong>信息变更：</strong>${changes.length ? `<ul style="margin:6px 0 0;padding-left:18px">${changes.map((item) => `<li>${escapeHtml(item)}</li>`).join("")}</ul>` : "无信息变更"}<br>
                 <strong>归属依据：</strong>${escapeHtml(attribution.business_reason)}
               </div>
@@ -1493,7 +1602,7 @@
         const policy = data?.policy_result || { result: "waiting", reason: "等待消息验证。" };
         const workbench = data?.workbench || {};
         const selectedTaskId = workbench.selected_task_id || attribution.selected_task_id;
-        const selectedTaskIds = workbench.selected_task_ids || attribution.selected_task_ids || (selectedTaskId ? [selectedTaskId] : []);
+        const selectedTaskIds = selectedTaskIdsFor(workbench, attribution);
         const selectedTaskSet = new Set(selectedTaskIds);
         const pendingClass = attribution.required_confirmation || attribution.decision === "hold_for_confirmation" ? "pending" : "";
         const taskCards = taskList.length
@@ -1627,7 +1736,7 @@
             </div>
             <div class="insight-item">
               <strong>它把消息归到哪里？</strong>
-              ${escapeHtml(workbench.attribution_label || decisionLabel(attribution.decision))}；目标任务：${escapeHtml(displayTaskIds(workbench.selected_task_ids || attribution.selected_task_ids || (workbench.selected_task_id ? [workbench.selected_task_id] : [])))}。
+              ${escapeHtml(workbench.attribution_label || decisionLabel(attribution.decision))}；目标任务：${escapeHtml(displayTaskIds(selectedTaskIdsFor(workbench, attribution)))}。
             </div>
             <div class="insight-item">
               <strong>归属依据是什么？</strong>
@@ -1687,7 +1796,7 @@
       }
 
       function formatEvidenceItems(items) {
-        return pickList(items, 4).map((item) => `${item.field_label || item.field_name}=${item.normalized_value}`);
+        return (items || []).map((item) => `${item.field_label || item.field_name}=${item.normalized_value}`);
       }
 
       function summarizeModelPayload(payload) {
@@ -1708,7 +1817,21 @@
         });
         if (payload.decision_hint) facts.push(`模型提示 ${readableValue(payload.decision_hint)}`);
         if (payload.scope) facts.push(`作用域 ${readableValue(payload.scope)}`);
+        if ((payload.reasoning_steps || []).length) facts.push(`推理 ${payload.reasoning_steps.slice(0, 2).map(readableValue).join("；")}`);
+        if ((payload.risk_analysis || []).length) facts.push(`风险 ${payload.risk_analysis.slice(0, 2).map(readableValue).join("；")}`);
         return facts;
+      }
+
+      function summarizeAttributionModelPayload(payload) {
+        if (!payload) return "真实模型给出归属提示，最终仍由业务规则和护栏校验。";
+        const pieces = [];
+        if (payload.business_reason) pieces.push(`推理结论：${compactText(payload.business_reason)}`);
+        if (payload.reasoning_steps?.length) pieces.push(`推理过程：${payload.reasoning_steps.map(readableValue).join("；")}`);
+        if (payload.candidate_analysis?.length) pieces.push(`候选分析：${payload.candidate_analysis.map(readableValue).join("；")}`);
+        if (payload.risk_analysis?.length) pieces.push(`风险判断：${payload.risk_analysis.map(readableValue).join("；")}`);
+        if (payload.decision_hint) pieces.push(`模型提示结果：${readableValue(payload.decision_hint)}`);
+        if (payload.scope) pieces.push(`作用域：${readableValue(payload.scope)}`);
+        return pieces.join("。") || "真实模型给出归属提示，最终仍由业务规则和护栏校验。";
       }
 
       function readableTrace(step) {
@@ -1741,9 +1864,13 @@
           if (output.textual_document_added) facts.push("补充文本材料");
         } else if (phase === "material_understanding.evidence") {
           const evidence = output.evidence || [];
+          const rawFields = output.raw_evidence_fields || evidence;
+          const dedupedFields = output.deduped_fields || evidence;
+          const scopes = evidenceScopeParts(evidence);
           main = evidence.length
-            ? `抽取 ${evidence.length} 条证据：${formatEvidenceItems(evidence).join("；")}。`
+            ? `抽取 ${output.raw_evidence_count || evidence.length} 条原始证据，去重后保留 ${evidence.length} 条；证据涵盖范围：${scopes.join("；")}。本次抽取字段：${evidenceFieldList(rawFields).join("；")}。去重保留字段：${evidenceFieldList(dedupedFields).join("；")}。`
             : "没有抽取到车辆、人员、报价方案或意图证据。";
+          if (evidence.length) facts.push(...scopes);
         } else if (phase === "material_understanding.route") {
           main = `材料理解给出的下一步是 ${output.next_route || step.branch || "未知"}。`;
           facts.push(output.current_intent ? `意图 ${intentLabel(output.current_intent)}` : null);
@@ -1764,9 +1891,10 @@
             main = `归属模型未参与，原因：${compactText(output.reason || output.error || "模型不可用")}。`;
           } else {
             const payload = output.model_payload || {};
-            main = payload.business_reason
-              ? `模型归属提示：${compactText(payload.business_reason)}。`
-              : "真实模型给出归属提示，最终仍由业务规则和护栏校验。";
+            const finalLabel = output.final_attribution_label || decisionLabel(output.final_decision);
+            const finalTarget = displayTaskIds(output.final_selected_task_ids || (output.final_selected_task_id ? [output.final_selected_task_id] : []));
+            const finalReason = output.final_business_reason ? `最终依据：${compactText(output.final_business_reason)}。` : "";
+            main = `${summarizeAttributionModelPayload(payload)}。结果总结：${finalLabel || "待决策"}，目标任务：${finalTarget}。${finalReason}`;
             facts.push(...summarizeModelPayload(payload));
           }
         } else if (phase === "task_attribution.evidence_view") {
@@ -1835,7 +1963,21 @@
             branch: policy.result,
           },
         ];
-        logicTimeline.innerHTML = traceSteps.map((step, index) => `
+        const enrichedTraceSteps = traceSteps.map((step) => {
+          if (step.phase !== "task_attribution.model") return step;
+          return {
+            ...step,
+            output_snapshot: {
+              ...(step.output_snapshot || {}),
+              final_decision: attribution.decision,
+              final_selected_task_id: workbench.selected_task_id || attribution.selected_task_id,
+              final_selected_task_ids: selectedTaskIdsFor(workbench, attribution),
+              final_attribution_label: workbench.attribution_label || decisionLabel(attribution.decision),
+              final_business_reason: attribution.business_reason,
+            },
+          };
+        });
+        logicTimeline.innerHTML = enrichedTraceSteps.map((step, index) => `
           <div class="step">
             <div class="step-number">${index + 1}</div>
             <div class="reasoning-card">
@@ -1890,7 +2032,7 @@
         const evidenceFields = new Set(data.material_understanding.evidence_list.map((item) => item.field_name));
         const workbench = data.workbench || {};
         const caps = [];
-        const selectedIds = workbench.selected_task_ids || (workbench.selected_task_id ? [workbench.selected_task_id] : []);
+        const selectedIds = selectedTaskIdsFor(workbench, data.task_attribution);
         if (data.event.attachments.length) caps.push("支持微信式真实附件上传，并将文件内容转为 Attachment（附件）输入。");
         if (data.event.attachments.some((item) => ["image", "pdf"].includes(item.file_type))) caps.push("图片/PDF（便携式文档格式）附件已进入材料理解 Agent（智能体）的多模态解析链路。");
         if (workbench.quote_display_text) caps.push("支持从已发送消息中引用；引用只做显示关联，不替代当前发送消息。");
@@ -2048,7 +2190,7 @@
           const workbench = applyAttributionToWorkbench(eventPayload, material, attribution);
           userMessage.workbench = workbench;
           userMessage.task_id = workbench.selected_task_id;
-          userMessage.task_ids = workbench.selected_task_ids || [];
+          userMessage.task_ids = selectedTaskIdsFor(workbench, attribution);
           const data = {
             event: eventPayload,
             material_understanding: material,

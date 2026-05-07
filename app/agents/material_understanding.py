@@ -37,6 +37,7 @@ VIN_RE = re.compile(r"\b[A-HJ-NPR-Z0-9]{17}\b", re.IGNORECASE)
 PHONE_RE = re.compile(r"\b1[3-9]\d{9}\b")
 ID_NO_RE = re.compile(r"\b[1-9]\d{5}(?:19|20)\d{2}(?:0[1-9]|1[0-2])(?:0[1-9]|[12]\d|3[01])\d{3}[\dXx]\b")
 PLATE_RE = re.compile(r"[\u4e00-\u9fa5][A-Z][\s-]?[A-Z0-9]{5,6}", re.IGNORECASE)
+ENGINE_NO_RE = re.compile(r"\b[A-Z0-9]{6,12}\b", re.IGNORECASE)
 DATE_RE = re.compile(r"(?P<year>20\d{2}|19\d{2})[-年./](?P<month>\d{1,2})[-月./](?P<day>\d{1,2})")
 QUOTE_FLOW_NO_RE = re.compile(r"\b\d{6,8}/\d{7,10}(?:-\d+)?\b")
 PROCESS_NO_RE = re.compile(r"\bQ\d{4,}\b", re.IGNORECASE)
@@ -204,18 +205,36 @@ class MaterialUnderstandingAgent:
             ],
         )
 
-        evidence = self._dedupe_evidence(
-            [
-                *self._model_evidence(event, documents, model_payload),
-                *self._extract_text_evidence(event, documents),
-            ]
-        )
+        raw_evidence = [
+            *self._model_evidence(event, documents, model_payload),
+            *self._extract_text_evidence(event, documents),
+        ]
+        evidence = self._dedupe_evidence(raw_evidence)
         trace.add(
             phase="evidence",
             step_name="证据抽取与去重",
             action="从模型结构化输出和当前消息文本抽取 Evidence（证据）",
             output_snapshot={
+                "raw_evidence_count": len(raw_evidence),
+                "raw_evidence_fields": [
+                    {
+                        "entity_type": item.entity_type,
+                        "field_name": item.field_name,
+                        "field_label": item.field_label,
+                        "normalized_value": item.normalized_value,
+                    }
+                    for item in raw_evidence
+                ],
                 "evidence_count": len(evidence),
+                "deduped_fields": [
+                    {
+                        "entity_type": item.entity_type,
+                        "field_name": item.field_name,
+                        "field_label": item.field_label,
+                        "normalized_value": item.normalized_value,
+                    }
+                    for item in evidence
+                ],
                 "evidence": [item.model_dump(mode="json") for item in evidence],
             },
             decision_basis=[
@@ -653,7 +672,9 @@ class MaterialUnderstandingAgent:
                 )
             )
 
+        evidence.extend(self._extract_engine_numbers(text, event, source_document_id, source_type))
         evidence.extend(self._extract_role_names(text, event, source_document_id, source_type))
+        evidence.extend(self._extract_loose_owner_names(text, event, source_document_id, source_type))
         evidence.extend(self._extract_insurance_plan(text, event, source_document_id, source_type))
         evidence.extend(self._extract_business_credentials(text, event, source_document_id, source_type))
         evidence.extend(self._extract_dates(text, event, source_document_id, source_type))
@@ -721,6 +742,38 @@ class MaterialUnderstandingAgent:
             return default
         return max(0.0, min(1.0, number))
 
+    def _extract_engine_numbers(
+        self, text: str, event: MessageEvent, source_document_id: str | None, source_type: str
+    ) -> list[EvidenceItem]:
+        protected = {match.group(0).upper() for match in VIN_RE.finditer(text.upper())}
+        protected.update(
+            match.group(0).upper().replace(" ", "").replace("-", "")
+            for match in PLATE_RE.finditer(text.upper())
+        )
+        evidence: list[EvidenceItem] = []
+        for match in ENGINE_NO_RE.finditer(text.upper()):
+            value = match.group(0).upper()
+            if len(value) == 17 or value.isdigit() or not any(char.isalpha() for char in value):
+                continue
+            if any(value == item or value in item for item in protected):
+                continue
+            evidence.append(
+                EvidenceItem(
+                    entity_type="vehicle",
+                    field_name="engineNo",
+                    field_label="发动机号",
+                    raw_value=match.group(0),
+                    normalized_value=value,
+                    source_type=source_type,
+                    source_document_id=source_document_id,
+                    source_event_id=event.event_id,
+                    confidence=0.74,
+                    evidence_strength=EvidenceStrength.medium,
+                    validation=FieldValidation(status=ValidationStatus.not_checked, rules=["engine_no_shape"]),
+                )
+            )
+        return evidence
+
     def _extract_role_names(
         self, text: str, event: MessageEvent, source_document_id: str | None, source_type: str
     ) -> list[EvidenceItem]:
@@ -753,6 +806,50 @@ class MaterialUnderstandingAgent:
             )
         return evidence
 
+    def _extract_loose_owner_names(
+        self, text: str, event: MessageEvent, source_document_id: str | None, source_type: str
+    ) -> list[EvidenceItem]:
+        evidence: list[EvidenceItem] = []
+        stop_words = {
+            "这台报价",
+            "帮这台",
+            "先算下",
+            "车架号",
+            "手机号",
+            "证件号",
+            "身份证",
+            "三者",
+            "非车",
+            "今晚起",
+            "今天起",
+            "明天生效",
+            "即刻生效",
+        }
+        for match in re.finditer(
+            rf"([\u4e00-\u9fa5]{{2,4}})[\s，,、/]+(?:{PHONE_RE.pattern}|{ID_NO_RE.pattern})",
+            text,
+        ):
+            value = match.group(1)
+            if value in stop_words or any(word in value for word in ["报价", "车架", "证件", "手机号"]):
+                continue
+            evidence.append(
+                EvidenceItem(
+                    entity_type="party",
+                    role="owner",
+                    field_name="ownerName",
+                    field_label="车主姓名",
+                    raw_value=value,
+                    normalized_value=value,
+                    source_type=source_type,
+                    source_document_id=source_document_id,
+                    source_event_id=event.event_id,
+                    confidence=0.76,
+                    evidence_strength=EvidenceStrength.medium,
+                    validation=FieldValidation(status=ValidationStatus.valid, rules=["person_name_near_contact_or_id"]),
+                )
+            )
+        return evidence
+
     def _extract_insurance_plan(
         self, text: str, event: MessageEvent, source_document_id: str | None, source_type: str
     ) -> list[EvidenceItem]:
@@ -781,6 +878,7 @@ class MaterialUnderstandingAgent:
             )
             evidence.append(self._intent_evidence("modify_quote", "修改报价", event, source_document_id, source_type))
 
+        product_match = None
         if any(token in text for token in ["不要非车", "去掉非车", "不要288", "不要 288"]):
             evidence.append(
                 EvidenceItem(
@@ -797,8 +895,12 @@ class MaterialUnderstandingAgent:
                 )
             )
             evidence.append(self._intent_evidence("modify_quote", "修改报价", event, source_document_id, source_type))
-        elif re.search(r"(?:非车|随车|驾意|那款|款).{0,8}(\d{2,4})|(\d{2,4}).{0,4}(?:非车|随车|驾意|款)", text):
-            products = ",".join(sorted(set(re.findall(r"\d{2,4}", text))))
+        else:
+            product_match = re.search(r"(?:非车|随车|驾意|那款|款)[^\d]{0,8}(\d{2,4})", text)
+            if not product_match:
+                product_match = re.search(r"(\d{2,4})[^\d]{0,4}(?:非车|随车|驾意|款)", text)
+        if product_match:
+            products = product_match.group(1)
             evidence.append(
                 EvidenceItem(
                     entity_type="non_auto_product",
